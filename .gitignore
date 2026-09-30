@@ -1,0 +1,17 @@
+# Image de référence (générée par IA) : gardée en local, hors du dépôt
+Gemini_Generated_Image_*.png
+
+# Copies temporaires de mesure (profilage du chargement)
+_*.html
+
+# Vercel (dossier créé par la ligne de commande `vercel`)
+.vercel/
+
+# Dépendances, si un outil npm arrive un jour
+node_modules/
+
+# Systèmes et éditeurs
+Thumbs.db
+desktop.ini
+.DS_Store
+*.log

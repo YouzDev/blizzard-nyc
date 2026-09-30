@@ -1,0 +1,4 @@
+# Fins de ligne LF partout (les fichiers sont écrits ainsi), images en binaire
+* text=auto eol=lf
+*.jpg binary
+*.png binary

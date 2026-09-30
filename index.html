@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blizzard — prototype FPS Three.js</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d131d; font-family: Georgia, "Times New Roman", serif; }
+  canvas { display: block; }
+  #entry {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 12, 20, 0.7); color: #e6ecf4; cursor: pointer; text-align: center;
+    transition: opacity .5s ease;
+  }
+  #entry.hidden { opacity: 0; pointer-events: none; }
+  #entry h1 { font-weight: normal; font-size: 2.6rem; letter-spacing: 0.02em; margin: 0 0 0.4em; }
+  #entry p  { margin: 0.25em 0; font-size: 1rem; opacity: 0.75; }
+  #entry .keys { margin-top: 1.4em; font-size: 0.9rem; opacity: 0.55; }
+  #entry .keys kbd {
+    display: inline-block; min-width: 1.4em; padding: 0.1em 0.4em; margin: 0 0.1em;
+    border: 1px solid rgba(230,236,244,0.35); border-radius: 3px; font-family: inherit;
+  }
+  /* choix du mode : deux grands boutons au centre ; les touches du mode photo n'apparaissent qu'une fois ce mode choisi */
+  #modeChoice { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin: 1.4em auto 0.4em; max-width: 720px; }
+  #modeChoice[hidden] { display: none; }
+  .mode-btn { flex: 1 1 260px; max-width: 330px; padding: 20px 22px; border: 1px solid rgba(230,236,244,0.28); border-radius: 8px; background: rgba(255,255,255,0.06);
+    color: #e6ecf4; font: inherit; text-align: left; cursor: pointer; transition: background .2s, border-color .2s, transform .2s; }
+  .mode-btn:not(:disabled):hover, .mode-btn:not(:disabled):focus-visible { background: rgba(255,255,255,0.13); border-color: rgba(232,196,106,0.8); transform: translateY(-2px); outline: none; }
+  .mode-btn:disabled { opacity: 0.45; cursor: progress; }
+  #loadBox { margin: 0.9em auto 0; }
+  #loadBox[hidden] { display: none; }
+  #loadBar { width: 240px; max-width: 70vw; height: 3px; margin: 0 auto 6px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden; }
+  #loadBar > div { width: 0; height: 100%; background: #e8c46a; transition: width .2s ease-out; }
+  #loadText { font-size: 0.85rem !important; opacity: 0.6 !important; }
+  .mode-btn strong { display: block; font-weight: normal; font-size: 1.35rem; margin-bottom: 6px; }
+  .mode-btn span { display: block; font-size: 0.92rem; opacity: 0.72; line-height: 1.4; }
+  .mode-btn.photo strong { color: #e8c46a; }
+  #entry .photo-keys { display: none; }
+  body[data-mode="photo"] #entry .photo-keys { display: inline; }
+  #changeMode { margin-top: 1.3em; padding: 4px 10px; border: 0; background: none; color: rgba(230,236,244,0.55); font: inherit; font-size: 0.85rem; text-decoration: underline; cursor: pointer; }
+  #changeMode:hover { color: #e6ecf4; }
+  #changeMode[hidden] { display: none; }
+  #hud { position: fixed; left: 14px; bottom: 12px; color: rgba(220,230,240,0.4); font-size: 12px; pointer-events: none; }
+  #sound {
+    position: fixed; top: 12px; right: 12px; z-index: 10; width: 30px; height: 30px; padding: 5px;
+    border: 1px solid rgba(220,230,240,0.18); border-radius: 50%; background: rgba(8,12,20,0.35);
+    color: rgba(220,230,240,0.45); cursor: pointer; transition: color .2s, border-color .2s, background .2s;
+  }
+  #sound:hover, #sound:focus-visible { color: rgba(230,236,244,0.9); border-color: rgba(220,230,240,0.45); background: rgba(8,12,20,0.6); outline: none; }
+  #sound svg { display: block; width: 100%; height: 100%; }
+  /* --- jeu photo --- */
+  #photoHud { position: fixed; left: 14px; top: 12px; z-index: 5; color: rgba(230,236,244,0.75); font-size: 13px; letter-spacing: 0.02em; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
+  #photoHud .low { color: #ff9a80; }
+  #photoHud em { opacity: 0.6; }
+  #viewfinder { position: fixed; inset: 0; z-index: 4; pointer-events: none; opacity: 0; transition: opacity .15s; }
+  #viewfinder.on { opacity: 1; }
+  #viewfinder .third { position: absolute; background: rgba(255,255,255,0.14); }
+  #viewfinder .v1 { left: 33.333%; top: 0; bottom: 0; width: 1px; } #viewfinder .v2 { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+  #viewfinder .h1 { top: 33.333%; left: 0; right: 0; height: 1px; } #viewfinder .h2 { top: 66.666%; left: 0; right: 0; height: 1px; }
+  #viewfinder .corner { position: absolute; width: 34px; height: 34px; border: 0 solid rgba(255,255,255,0.7); }
+  #viewfinder .tl { left: 3%; top: 4%; border-left-width: 2px; border-top-width: 2px; } #viewfinder .tr { right: 3%; top: 4%; border-right-width: 2px; border-top-width: 2px; }
+  #viewfinder .bl { left: 3%; bottom: 4%; border-left-width: 2px; border-bottom-width: 2px; } #viewfinder .br { right: 3%; bottom: 4%; border-right-width: 2px; border-bottom-width: 2px; }
+  #viewfinder .dot { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border: 1px solid rgba(255,255,255,0.6); border-radius: 50%; }
+  #vfInfo { position: absolute; left: 0; right: 0; bottom: 5.5%; text-align: center; color: rgba(240,244,250,0.85); font-size: 13px; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+  #flash { position: fixed; inset: 0; z-index: 6; background: #fff; opacity: 0; pointer-events: none; }
+  #flash.go { animation: flash .35s ease-out; }
+  @keyframes flash { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+  #wipe { position: fixed; inset: 0; z-index: 6; pointer-events: none; opacity: 0;
+    background: linear-gradient(100deg, transparent 25%, rgba(210,220,235,0.28) 42%, rgba(255,255,255,0.18) 50%, transparent 68%); background-size: 250% 100%; }
+  #wipe.go { animation: wipe 1s ease-in-out; }
+  @keyframes wipe { 0% { opacity: 1; background-position: 100% 0; } 90% { opacity: 1; } 100% { opacity: 0; background-position: -60% 0; } }
+  #toast { position: fixed; left: 50%; bottom: 44px; z-index: 7; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 8px 16px; border-radius: 4px;
+    background: rgba(8,12,20,0.78); color: #e6ecf4; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; text-align: center; }
+  #toast.on { opacity: 1; }
+  #album, #report { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto; padding: 24px 16px 40px; box-sizing: border-box;
+    background: rgba(6,9,15,0.94); color: #e6ecf4; }
+  #album.open, #report.open { display: block; }
+  #album h2, #report h2 { font-weight: normal; margin: 0 0 4px; font-size: 1.7rem; }
+  #album p, #report p { margin: 0; opacity: 0.75; font-size: 14px; }
+  .al-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; max-width: 1200px; margin: 0 auto 18px; }
+  .al-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .al-empty { max-width: 1200px; margin: 40px auto !important; text-align: center; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; max-width: 1200px; margin: 0 auto; }
+  .card { position: relative; padding: 8px; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; background: rgba(255,255,255,0.04); cursor: pointer; }
+  .card:hover { border-color: rgba(255,255,255,0.3); }
+  .card.sel { border-color: #e8c46a; box-shadow: 0 0 0 2px rgba(232,196,106,0.45); }
+  .card img { display: block; width: 100%; border-radius: 3px; }
+  .card .score { position: absolute; right: 14px; top: 14px; padding: 2px 9px; border-radius: 10px; background: rgba(0,0,0,0.7); font-size: 14px; }
+  .card .tick { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); padding: 2px 9px; border-radius: 10px; background: #e8c46a; color: #1a1206; font-size: 13px; }
+  .card .del { position: absolute; left: 14px; top: 14px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0,0,0,0.65); color: #fff; font-size: 16px; line-height: 26px; cursor: pointer; padding: 0; }
+  .card .del:hover { background: #a3301f; }
+  .subj { margin: 8px 0 3px; font-size: 15px; }
+  .parts { font-size: 12px; opacity: 0.65; }
+  .rem { margin-top: 4px; font-size: 12.5px; opacity: 0.85; line-height: 1.35; }
+  .btn { font: inherit; font-size: 14px; padding: 8px 16px; border: 1px solid rgba(255,255,255,0.28); border-radius: 4px; background: rgba(255,255,255,0.07); color: #e6ecf4; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn:hover { background: rgba(255,255,255,0.14); }
+  .btn.main { background: #c8a24a; border-color: transparent; color: #1a1206; }
+  .btn.main:hover { background: #dbb65c; }
+  .btn:disabled { opacity: 0.35; cursor: default; }
+  .rep-head { max-width: 1000px; margin: 0 auto 26px; text-align: center; }
+  .rep-kicker { text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px !important; }
+  .rep-verdict { font-size: 1.15rem !important; opacity: 1 !important; margin: 10px 0 !important; }
+  .rep-total { margin-bottom: 16px !important; }
+  .rep-total strong { font-size: 1.6rem; font-weight: normal; color: #e8c46a; }
+  .rep-photo { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 18px; max-width: 1000px; margin: 0 auto 26px; }
+  .rep-photo img { width: 100%; border-radius: 4px; display: block; }
+  .rep-photo figcaption { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .rep-score { font-size: 2.2rem; color: #e8c46a; } .rep-score span { font-size: 1rem; opacity: 0.6; color: #e6ecf4; }
+  @media (max-width: 700px) { .rep-photo { grid-template-columns: 1fr; } }
+  #sound .waves { display: none; } #sound.on .waves { display: inline; } #sound.on .mute { display: none; }
+</style>
+</head>
+<body>
+
+<div id="entry">
+  <div>
+    <h1>Une nuit de blizzard</h1>
+    <p id="entryHint">Choisissez votre nuit.</p>
+    <div id="modeChoice">
+      <button class="mode-btn" type="button" data-mode="normal" disabled><strong>Mode normal</strong><span>Se promener librement dans la rue, sous la tempête. Pas de chrono.</span></button>
+      <button class="mode-btn photo" type="button" data-mode="photo" disabled><strong>Mode photo</strong><span>Photographe de presse : 10 minutes pour rapporter 5 photos à la rédaction, notées sur 50.</span></button>
+    </div>
+    <div id="loadBox"><div id="loadBar"><div></div></div><p id="loadText">Préparation de la rue…</p></div>
+    <div class="keys">
+      <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> marcher · souris regarder · <kbd>M</kbd> son · <kbd>Échap</kbd> pause
+      <span class="photo-keys"><br>clic droit (ou <kbd>V</kbd>) viser · clic gauche (ou <kbd>Espace</kbd>) déclencher · molette zoom<br>
+      <kbd>E</kbd> essuyer l'objectif · <kbd>I</kbd> album</span>
+    </div>
+    <button id="changeMode" type="button" hidden>Changer de mode (nouvelle nuit)</button>
+  </div>
+</div>
+<div id="hud"></div>
+<div id="photoHud"></div>
+<div id="viewfinder">
+  <div class="third v1"></div><div class="third v2"></div><div class="third h1"></div><div class="third h2"></div>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <div class="dot"></div><div id="vfInfo"></div>
+</div>
+<div id="flash"></div>
+<div id="wipe"></div>
+<div id="toast"></div>
+<div id="album"></div>
+<div id="report"></div>
+<button id="sound" type="button" aria-label="Son du vent" aria-pressed="false" title="Activer le son (M)">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" fill-opacity="0.25"/>
+    <g class="waves"><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></g>
+    <g class="mute"><path d="M16 9.5l5 5M21 9.5l-5 5"/></g>
+  </svg>
+</button>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module" src="./src/main.js"></script>
+
+</body>
+</html>
