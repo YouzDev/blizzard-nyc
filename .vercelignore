@@ -1,0 +1,7 @@
+# Fichiers du dépôt qui n'ont rien à faire sur le site public (le dépôt GitHub les garde)
+CLAUDE.md
+build.js
+.gitignore
+.gitattributes
+Gemini_Generated_Image_*.png
+_*.html

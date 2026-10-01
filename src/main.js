@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+// EN PREMIER : remplace le calcul des lumières dans les shaders avant toute compilation (voir le module)
+import { lightLoop } from './core/lightLoop.js';
 import { WALK_SPEED, PLAYER_RADIUS } from './core/constants.js';
 import { collides } from './world/collisions.js';
 import { renderer } from './core/renderer.js';
@@ -53,7 +55,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
