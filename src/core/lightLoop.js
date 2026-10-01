@@ -109,3 +109,25 @@ let lightChunk = lightLoop.mode === 'origine' ? LIGHTS_ORIGINAL
   : compact;
 if (lightParams.has('shaderbust')) lightChunk += `\n// shaderbust ${String(lightParams.get('shaderbust')).replace(/[^\w-]/g, '')}\n`;
 THREE.ShaderChunk.lights_fragment_begin = lightChunk;
+
+/* --- Nombre de lumières FIXE, pour que le navigateur réutilise ses shaders d'une visite à l'autre.
+   Le nombre de PointLight est écrit dans le texte de chaque shader (NUM_POINT_LIGHTS). Or il
+   varie d'une rue à l'autre (lanternes d'entrée, boutiques ouvertes, enseignes allumées, tirées
+   au hasard : 36, 38…) : chaque visite tombait sur un autre texte, le cache de shaders du
+   navigateur ne servait jamais, et la 2e visite était aussi lente que la 1re. On complète donc
+   jusqu'à un nombre fixe avec des lumières ÉTEINTES (noires, intensité 0, portée minuscule,
+   loin sous le sol) : la boucle les écarte au premier test, elles n'éclairent rien.
+   Au-delà de POINT_LIGHT_SLOTS (rue exceptionnelle), on arrondit au multiple de 8 suivant :
+   seule une telle rue recompile. Les SpotLight (16 lampadaires + néon) sont en nombre fixe. */
+export const POINT_LIGHT_SLOTS = 48;
+export function padPointLights(scene) {
+  let n = 0;
+  scene.traverse(o => { if (o.isPointLight) n++; });
+  const target = n <= POINT_LIGHT_SLOTS ? POINT_LIGHT_SLOTS : Math.ceil(n / 8) * 8;
+  for (let i = n; i < target; i++) {
+    const l = new THREE.PointLight(0x000000, 0, 0.001, 2);
+    l.position.set(0, -1000, 0); l.name = 'lumiere-de-remplissage';
+    scene.add(l);
+  }
+  return { avant: n, apres: target };
+}

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { photosSettled } from '../textures/photo.js';
+import { padPointLights } from './lightLoop.js';
 
 /* =====================================================================
    1 quater. PRÉPARATION PENDANT LE MENU
@@ -96,6 +97,7 @@ function sceneTextures(scene) {
 
 export async function prepareScene({ renderer, scene, camera, composer }) {
   const t0 = performance.now();
+  startup.lights = padPointLights(scene);                   // AVANT toute compilation : même texte de shader à chaque visite
   showProgress(0.02, 'Préparation de la rue…');
   await nextFrame();                                        // laisse le menu s'afficher
 
