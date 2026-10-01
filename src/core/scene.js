@@ -48,4 +48,7 @@ export const skyMat = new THREE.ShaderMaterial({
         gl_FragColor = vec4(c, 1.0);
       }`,
 });
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(230, 24, 16), skyMat));
+// la voûte suit la caméra (main.js) : loin de l'origine (rue de gauche), une sphère fixe se
+// déformait (horizon de travers) et son bord le plus éloigné sortait du champ de la caméra
+export const sky = new THREE.Mesh(new THREE.SphereGeometry(230, 24, 16), skyMat);
+scene.add(sky);

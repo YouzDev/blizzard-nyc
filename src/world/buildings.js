@@ -1,20 +1,20 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { FACADE_X, SIDEWALK_H, STREET_Z_MIN, STREET_Z_MAX } from '../core/constants.js';
+import { FACADE_X, SIDEWALK_H, STREET_Z_MAX, CROSS_Z, LEFT_END_X } from '../core/constants.js';
 import { rnd, smoothNoise } from '../core/noise.js';
-import { scene } from '../core/scene.js';
 import { brick, stone, winInteriorTex, winDarkTex, shutterTex, lampPaint } from '../textures/index.js';
 import { makeSignTexture, SHOP_NAMES } from '../textures/signs.js';
 import { makeDoorLeafTextures, makeHallGlassTexture, makeTransomTexture } from '../textures/door.js';
 import { makeShopInteriorTexture, makeOpenSignTexture, makeWindowDecalAtlas, makeValanceTexture, makeStripeTexture, DECALS } from '../textures/shop.js';
 import { MAT } from './materials.js';
-import { addCollider, shadowed } from './collisions.js';
+import { shadowed } from './collisions.js';
 import { weather } from './weathering.js';
 import { makeInteriorMaterial } from './shopInterior.js';
 import { usePhoto } from '../textures/photo.js';
 import { snowPhoto } from './snowPhoto.js';
 import { addSubject, boxAt } from '../game/subjects.js';
 import { addPointSource } from './lightRegistry.js';
+import { MAIN, LEFT, LEFT_END, LEFT_CHUNKS } from './street.js';
 
 /* =====================================================================
    6. BÂTIMENTS : soubassement en pierre, briques, fenêtres, climatiseurs,
@@ -31,8 +31,11 @@ const winFrameGeo = (() => {
   return mergeGeometries(g);
 })();
 const winGlassGeo = new THREE.PlaneGeometry(WIN_W - 0.1, WIN_H - 0.1);
-const frameInst = [], litInst = [[], [], []], darkInst = [], shadeInst = [[], [], []];
-const escGeoms = [], fenceGeoms = [], concGeoms = [], snowGeoms = [], basementGlass = [], plinthGeoms = [];
+// Accumulateurs de la rue EN CONSTRUCTION (ST) : remis à zéro par beginStreet, fusionnés et
+// ajoutés au groupe de la rue par endStreet. Tout le code des immeubles travaille dans le repère
+// de ST ; ce qui doit sortir en coordonnées monde passe par ses méthodes (collider, box, toWorld).
+let ST = null;
+let frameInst, litInst, darkInst, shadeInst, escGeoms, fenceGeoms, concGeoms, snowGeoms, basementGlass, plinthGeoms;
 
 /** Boîte avec UV à l'échelle du monde (texture de 5,5 m), translatée. */
 function worldBox(list, w, h, d, x, y, z, scaleU = 5.5) {
@@ -50,8 +53,9 @@ function worldBox(list, w, h, d, x, y, z, scaleU = 5.5) {
  *  Tout est versé dans `snowGeoms` et fusionné en UN seul objet à la fin — il y avait
  *  plus de mille pavés séparés, soit autant d'appels de dessin.
  *  `rotZ` incline la nappe autour de son point d'appui (stores) ; `step` = pas des
- *  sommets le long de la longueur (0,18 m suffit pour le bruit ; grossier sur les toits). */
-function snowPad(cx, baseY, cz, sx, sz, h, rotZ = 0, step = 0.18) {
+ *  sommets le long de la longueur (0,18 m suffit pour le bruit ; grossier sur les toits) ;
+ *  `rotY` = π/2 couche la longueur le long de X (rebords d'une façade tournée vers ±Z). */
+function snowPad(cx, baseY, cz, sx, sz, h, rotZ = 0, step = 0.18, rotY = 0) {
   const nx = Math.min(8, Math.max(4, Math.round(sx / 0.07)));
   const nz = Math.min(120, Math.max(4, Math.round(sz / step)));
   const g = new THREE.PlaneGeometry(sx, sz, nx, nz); g.rotateX(-Math.PI / 2);
@@ -66,6 +70,7 @@ function snowPad(cx, baseY, cz, sx, sz, h, rotZ = 0, step = 0.18) {
     p.setY(i, across * ends * h * n);
   }
   if (rotZ) g.rotateZ(rotZ);
+  if (rotY) g.rotateY(rotY);
   g.translate(cx, baseY, cz);
   g.computeVertexNormals();
   snowGeoms.push(g);
@@ -80,7 +85,7 @@ const snowPadMat = snowPhoto(MAT.snow.clone()); snowPadMat.side = THREE.DoubleSi
 function flushSnowPads(from) {
   const list = snowGeoms.splice(from);
   if (!list.length) return;
-  const m = new THREE.Mesh(mergeGeometries(list), snowPadMat); m.receiveShadow = true; scene.add(m);
+  const m = new THREE.Mesh(mergeGeometries(list), snowPadMat); m.receiveShadow = true; ST.add(m);
 }
 
 function buildBuilding(side, z0, depthZ, height, opts) {
@@ -92,9 +97,10 @@ function buildBuilding(side, z0, depthZ, height, opts) {
   const pitch = depthZ / cols;
   const brickGeoms = [];
 
-  // --- Mur de fond (face en retrait) sur toute la hauteur au-dessus du soubassement
-  const innerFace = faceX - ox * RECESS;
-  worldBox(brickGeoms, width - RECESS, height - BASE_H, depthZ, (outerX + innerFace) / 2, BASE_H + (height - BASE_H) / 2, cz);
+  // --- Mur de fond (face en retrait) sur toute la hauteur au-dessus du soubassement ;
+  // raccourci du côté d'une 2e façade (immeuble d'angle) : ses fenêtres y sont en retrait aussi
+  const innerFace = faceX - ox * RECESS, eF = opts.endFacade ?? 0;
+  worldBox(brickGeoms, width - RECESS, height - BASE_H, depthZ - (eF ? RECESS : 0), (outerX + innerFace) / 2, BASE_H + (height - BASE_H) / 2, cz - eF * RECESS / 2);
   // --- Allèges (bandes horizontales en saillie) entre les rangées de fenêtres
   const yb = r => BASE_H + 0.9 + r * FLOOR_H, yt = r => yb(r) + WIN_H;
   const spanX = faceX - ox * RECESS / 2;
@@ -107,6 +113,7 @@ function buildBuilding(side, z0, depthZ, height, opts) {
     const za = c === 0 ? z0 : wz(c - 1) + WIN_W / 2, zb = c === cols ? z0 + depthZ : wz(c) - WIN_W / 2;
     worldBox(brickGeoms, RECESS, height - BASE_H, zb - za, spanX, BASE_H + (height - BASE_H) / 2, (za + zb) / 2);
   }
+  if (eF) buildEndFacade(side, eF, z0, depthZ, height, rows, yb, yt, brickGeoms);
   const brickMat = new THREE.MeshStandardMaterial({ map: brick.map, normalMap: brick.normal, normalScale: new THREE.Vector2(0.75, 0.75), roughnessMap: brick.rough, roughness: 1,
     color: new THREE.Color().setHSL(0.02 + Math.random() * 0.035, 0.45 + Math.random() * 0.2, 0.36 + Math.random() * 0.16) });
   // suie sous la corniche, coulures sous chaque appui, plaques (voir weathering.js)
@@ -117,10 +124,10 @@ function buildBuilding(side, z0, depthZ, height, opts) {
   const brickPhoto = br < 0.18 ? ['painted_worn_brick', 5.5 / 1.8, 0.85]      // brique peinte crème, écaillée
                    : br < 0.43 ? ['red_brick_03', 5.5 / 1.0, 0.55] : ['red_bricks_04', 5.5 / 2.5, 0.55];
   usePhoto(brickMat, brickPhoto[0], brickPhoto[1], brickPhoto[1], m => m.color.lerp(PHOTO_WHITE, brickPhoto[2]));
-  weather(brickMat, { top: height, z0, pitch, cols, y0: BASE_H + 0.9, floorH: FLOOR_H, rows, winW: WIN_W,
+  weather(brickMat, { top: height, z0, pitch, cols, y0: BASE_H + 0.9, floorH: FLOOR_H, rows, winW: WIN_W, frame: ST.frame, warm: ST.warm,
     // coulures de rouille sous les paliers de l'escalier de secours
     ...(opts.fireEscape ? { escZ: cz + opts.escapeOffset, escW: 3.4, escY0: BASE_H + 1.0, escN: escapeFloors(height, BASE_H) } : {}) });
-  scene.add(shadowed(new THREE.Mesh(mergeGeometries(brickGeoms), brickMat)));
+  ST.add(shadowed(new THREE.Mesh(mergeGeometries(brickGeoms), brickMat)));
 
   // --- Fenêtres : cadre, vitre en retrait, linteau et appui en pierre, neige, climatiseurs
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0)), qId = new THREE.Quaternion(), m = new THREE.Matrix4(), one = new THREE.Vector3(1, 1, 1);
@@ -137,7 +144,7 @@ function buildBuilding(side, z0, depthZ, height, opts) {
     snowPad(faceX + ox * 0.1 - ox * RECESS / 2, yb(r), z, RECESS + 0.2, WIN_W + 0.24, 0.12);          // neige sur l'appui
     snowPad(faceX + ox * 0.05 - ox * RECESS / 2, yt(r) + 0.24, z, RECESS + 0.12, WIN_W + 0.3, 0.1);   // neige sur le linteau
     if (Math.random() < 0.1) {
-      const ac = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 0.62), MAT.concrete)); ac.position.set(faceX + ox * 0.22, yb(r) + 0.22, z); scene.add(ac);
+      const ac = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 0.62), MAT.concrete)); ac.position.set(faceX + ox * 0.22, yb(r) + 0.22, z); ST.add(ac);
       snowPad(faceX + ox * 0.22, yb(r) + 0.43, z, 0.48, 0.6, 0.12);
     }
   }
@@ -149,13 +156,13 @@ function buildBuilding(side, z0, depthZ, height, opts) {
   const STONE_TINTS = [[0.74, 0.7, 0.62], [0.56, 0.41, 0.33], [0.6, 0.62, 0.64], [0.68, 0.6, 0.5]];
   const tint = STONE_TINTS[Math.floor(Math.random() * STONE_TINTS.length)], tk = 0.9 + Math.random() * 0.15;
   baseMat.color.setRGB(tint[0] * tk, tint[1] * tk, tint[2] * tk);
-  weather(baseMat, { strength: 0.8 });
+  weather(baseMat, { strength: 0.8, frame: ST.frame, warm: ST.warm });
   // pierre photo (tuile de 3 m) : calcaire clair pour la teinte « calcaire », blocs refendus sinon
   usePhoto(baseMat, tint === STONE_TINTS[0] ? 'sandstone_blocks_08' : 'large_sandstone_blocks', depthZ / 3, BASE_H / 3, m => m.color.lerp(PHOTO_WHITE, 0.45));
-  const base = shadowed(new THREE.Mesh(new THREE.BoxGeometry(width, BASE_H, depthZ), baseMat)); base.position.set(side * (FACADE_X + width / 2), BASE_H / 2, cz); scene.add(base);
+  const base = shadowed(new THREE.Mesh(new THREE.BoxGeometry(width, BASE_H, depthZ), baseMat)); base.position.set(side * (FACADE_X + width / 2), BASE_H / 2, cz); ST.add(base);
   worldBox(concGeoms, 0.35, 0.3, depthZ + 0.1, faceX + ox * 0.12, BASE_H + 0.15, cz);
   worldBox(plinthGeoms, 0.07, 0.62, depthZ, faceX + ox * 0.035, 0.31, cz);                     // socle en granit au pied du mur
-  if (!opts.storefront) buildGroundFloor(side, z0, depthZ, opts.stoop ? cz + opts.stoopOffset : null);
+  if (!opts.storefront) buildGroundFloor(side, z0, depthZ, opts.stoop || opts.gradeDoor ? cz + opts.stoopOffset : null);
   snowPad(faceX + ox * 0.12, BASE_H + 0.3, cz, 0.4, depthZ + 0.12, 0.14);
 
   // --- Corniche à denticules, parapet, neige de toit, édicule, cheminées, descente d'eau
@@ -165,13 +172,13 @@ function buildBuilding(side, z0, depthZ, height, opts) {
   worldBox(concGeoms, 0.3, 0.9, depthZ, faceX + ox * 0.0 - ox * 0.15, height + 0.45, cz);                     // parapet
   snowPad(faceX - ox * 0.15, height + 0.9, cz, 0.42, depthZ + 0.1, 0.2);
   snowPad(side * (FACADE_X + width / 2) + ox * 0.15, height, cz, width - 0.6, depthZ - 0.4, 0.3, 0, 1.2);   // toit : invisible depuis la rue, maillage grossier
-  const bulk = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.6, 2.8), brickMat)); bulk.position.set(side * (FACADE_X + width / 2) + side * 2, height + 1.3, cz + rnd(-2, 2)); scene.add(bulk);
+  const bulk = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.6, 2.8), brickMat)); bulk.position.set(side * (FACADE_X + width / 2) + side * 2, height + 1.3, cz + rnd(-2, 2)); ST.add(bulk);
   snowPad(bulk.position.x, height + 2.6, bulk.position.z, 2.5, 2.9, 0.25);
   for (let k = 0; k < 1 + Math.floor(Math.random() * 2); k++) {
-    const ch = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.6, 0.7), brickMat)); ch.position.set(side * (FACADE_X + 4 + Math.random() * 6), height + 0.8, z0 + 1 + Math.random() * (depthZ - 2)); scene.add(ch);
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.12, 0.8), MAT.concrete); cap.position.copy(ch.position).y = height + 1.65; scene.add(cap);
+    const ch = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.6, 0.7), brickMat)); ch.position.set(side * (FACADE_X + 4 + Math.random() * 6), height + 0.8, z0 + 1 + Math.random() * (depthZ - 2)); ST.add(ch);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.12, 0.8), MAT.concrete); cap.position.copy(ch.position).y = height + 1.65; ST.add(cap);
   }
-  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, height, 8), MAT.iron); pipe.position.set(faceX + ox * 0.1 - ox * RECESS + ox * 0.08, height / 2, z0 + 0.25); scene.add(pipe);
+  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, height, 8), MAT.iron); pipe.position.set(faceX + ox * 0.1 - ox * RECESS + ox * 0.08, height / 2, z0 + 0.25); ST.add(pipe);
   if (opts.waterTower) {
     const g = new THREE.Group();
     for (const [lx, lz] of [[-1.2, -1.2], [1.2, -1.2], [-1.2, 1.2], [1.2, 1.2]]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4, 0.18), MAT.iron); leg.position.set(lx, 2, lz); g.add(leg); }
@@ -180,7 +187,7 @@ function buildBuilding(side, z0, depthZ, height, opts) {
     for (const yy of [4.4, 5.7, 7.0]) { const hoop = new THREE.Mesh(new THREE.TorusGeometry(1.72, 0.03, 6, 24), MAT.iron); hoop.rotation.x = Math.PI / 2; hoop.position.y = yy; g.add(hoop); }
     const roof = new THREE.Mesh(new THREE.ConeGeometry(1.9, 1.3, 20), MAT.iron); roof.position.y = 8.05; g.add(roof);
     const cap = new THREE.Mesh(new THREE.ConeGeometry(1.95, 0.5, 20), MAT.snow); cap.position.y = 8.55; g.add(cap);
-    g.position.set(side * (FACADE_X + width / 2) + side * 3.5, height, cz + rnd(-2, 2)); scene.add(g);
+    g.position.set(side * (FACADE_X + width / 2) + side * 3.5, height, cz + rnd(-2, 2)); ST.add(g);
     addSubject({ label: "Un château d'eau sur les toits", value: 0.75, object: g });
   }
 
@@ -199,10 +206,107 @@ function buildBuilding(side, z0, depthZ, height, opts) {
     }
   } else if (opts.stoop) {
     buildStoop(side, cz + opts.stoopOffset, depthZ);
+  } else if (opts.gradeDoor) {
+    // porte de plain-pied (fond de l'impasse : la chaussée arrive au pied de la façade)
+    buildEntrance(side, cz + opts.stoopOffset, SIDEWALK_H);
+    ST.doorZones.push({ side, z0: cz + opts.stoopOffset - 1.2, z1: cz + opts.stoopOffset + 1.2 });
   }
   if (opts.fireEscape) buildFireEscape(side, cz + opts.escapeOffset, height, BASE_H);
   flushSnowPads(snowStart);
   return { cx: side * (FACADE_X + width / 2), cz, height, depthZ };
+}
+
+/** 2e FAÇADE d'un immeuble d'angle, sur son bout (eF = −1 : bout z0, +1 : bout z0 + depthZ),
+ *  tournée vers la rue d'à côté. Un mur pignon aveugle de 14 m au coin d'une rue se lisait comme
+ *  un décor : on y reprend la trame de la façade principale — allèges et trumeaux en saillie,
+ *  fenêtres en retrait (mêmes instances), linteaux, appuis, climatiseurs, neige —, la corniche et
+ *  le parapet en retour, le bandeau et le socle, et au rez-de-chaussée des fenêtres d'habitation
+ *  grillagées avec leurs soupiraux. Les pièces sont construites dans le repère d'une façade
+ *  (x = profondeur vers la rue, z = le long de la façade) puis tournées d'un quart de tour. */
+function buildEndFacade(side, eF, z0, depthZ, height, rows, yb, yt, brickGeoms) {
+  const width = 14, ox = -side, faceX = side * FACADE_X, outerX = side * (FACADE_X + width);
+  const zF = eF < 0 ? z0 : z0 + depthZ, Z = d => zF + eF * d;      // d > 0 : devant la façade, d < 0 : dans le mur
+  const xA = faceX - ox * RECESS, W = width - RECESS, xAt = u => xA + side * u;   // u : distance depuis l'angle
+  const turn = -eF * Math.PI / 2;
+  const qFrame = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, turn, 0));
+  const qGlass = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, eF > 0 ? 0 : Math.PI, 0)), one = new THREE.Vector3(1, 1, 1), m = new THREE.Matrix4();
+  /** boîte (profondeur, hauteur, longueur) posée à la profondeur d, à la position u le long de la façade */
+  const put = (list, geo, d, y, u) => { geo.rotateY(turn); geo.translate(xAt(u), y, Z(d)); list.push(geo); return geo; };
+  const box = (list, dd, h, along, d, y, u, scaleU = 5.5) => {
+    const g = new THREE.BoxGeometry(dd, h, along), uv = g.attributes.uv, su = Math.max(dd, along) / scaleU, sv = h / scaleU;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+    return put(list, g, d, y, u);
+  };
+  const pad = (d, y, u, sx, sz, h) => snowPad(xAt(u), y, Z(d), sx, sz, h, 0, 0.18, Math.PI / 2);
+  const win = (u, wy, d, pLit, pShade) => {
+    m.compose(new THREE.Vector3(xAt(u), wy, Z(d + 0.04)), qFrame, one); frameInst.push(m.clone());
+    m.compose(new THREE.Vector3(xAt(u), wy, Z(d)), qGlass, one);
+    const r = Math.random();
+    if (r < pLit) litInst[Math.floor(Math.random() * 3)].push(m.clone());
+    else if (r < pLit + pShade) shadeInst[Math.floor(Math.random() * 3)].push(m.clone());
+    else darkInst.push(m.clone());
+  };
+
+  // --- étages : même trame que la façade principale
+  const cols = Math.max(2, Math.floor((W - 1.0) / 3.0)), pitch = W / cols, wu = c => (c + 0.5) * pitch;
+  let prevTop = BASE_H;
+  for (let r = 0; r < rows; r++) { box(brickGeoms, RECESS, yb(r) - prevTop, W, -RECESS / 2, (prevTop + yb(r)) / 2, W / 2); prevTop = yt(r); }
+  box(brickGeoms, RECESS, height - prevTop, W, -RECESS / 2, (prevTop + height) / 2, W / 2);
+  for (let c = 0; c <= cols; c++) {
+    const ua = c === 0 ? 0 : wu(c - 1) + WIN_W / 2, ub = c === cols ? W : wu(c) - WIN_W / 2;
+    box(brickGeoms, RECESS, height - BASE_H, ub - ua, -RECESS / 2, BASE_H + (height - BASE_H) / 2, (ua + ub) / 2);
+  }
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const u = wu(c);
+    win(u, yb(r) + WIN_H / 2, -RECESS + 0.02, 0.26, 0.55 * 0.74);
+    box(concGeoms, RECESS + 0.1, 0.24, WIN_W + 0.36, 0.05 - RECESS / 2, yt(r) + 0.12, u);       // linteau
+    box(concGeoms, RECESS + 0.2, 0.13, WIN_W + 0.28, 0.1 - RECESS / 2, yb(r) - 0.065, u);       // appui
+    pad(0.1 - RECESS / 2, yb(r), u, RECESS + 0.2, WIN_W + 0.24, 0.12);
+    pad(0.05 - RECESS / 2, yt(r) + 0.24, u, RECESS + 0.12, WIN_W + 0.3, 0.1);
+    if (Math.random() < 0.1) {
+      const ac = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 0.62), MAT.concrete)); ac.rotation.y = turn; ac.position.set(xAt(u), yb(r) + 0.22, Z(0.22)); ST.add(ac);
+      pad(0.22, yb(r) + 0.43, u, 0.48, 0.6, 0.12);
+    }
+  }
+  // --- corniche, parapet et bandeau en retour d'angle : chaque pièce va de l'arête AVANT de sa
+  // jumelle de la façade principale (u < 0 : au-delà de l'angle) jusqu'au fond de l'immeuble
+  const span = (u0, u1) => [u1 - u0, (u0 + u1) / 2];
+  const [lL, lC] = span(-(RECESS + 0.675), W + 0.3);
+  box(concGeoms, 0.75, 0.22, lL, 0.3, height - 0.11, lC);                     // larmier
+  const [fL, fC] = span(-(RECESS + 0.375), W + 0.25);
+  box(concGeoms, 0.45, 0.3, fL, 0.15, height - 0.5, fC);                      // frise
+  for (let u = 0.25; u < W; u += 0.55) box(concGeoms, 0.28, 0.2, 0.25, 0.3, height - 0.35, u);   // denticules
+  const [pL, pC] = span(-RECESS, W);
+  box(concGeoms, 0.3, 0.9, pL, -0.15, height + 0.45, pC);                     // parapet
+  pad(-0.15, height + 0.9, pC, 0.42, pL, 0.2);
+  const [bL, bC] = span(-(RECESS + 0.295), W + 0.05);
+  box(concGeoms, 0.35, 0.3, bL, 0.12, BASE_H + 0.15, bC);                     // bandeau au-dessus du soubassement
+  pad(0.12, BASE_H + 0.3, bC, 0.4, bL + 0.02, 0.14);
+  const [sL, sC] = span(-(RECESS + 0.07), W);
+  box(plinthGeoms, 0.07, 0.62, sL, 0.035, 0.31, sC);                          // socle en granit
+  // --- rez-de-chaussée d'habitation : fenêtres grillagées, encadrement de pierre, soupiraux
+  const sill = SIDEWALK_H + 1.15, wy = sill + WIN_H / 2;
+  const n = Math.max(1, Math.floor((width - 1.6) / 2.6)), gp = (width - 1.6) / n;
+  const grille = (u, ya, yb2, wdt) => {
+    for (let bz = -wdt / 2; bz <= wdt / 2 + 1e-3; bz += 0.11) put(fenceGeoms, new THREE.CylinderGeometry(0.011, 0.011, yb2 - ya, 5), 0.2, (ya + yb2) / 2, u + bz);
+    for (const hy of [ya + 0.04, (ya + yb2) / 2, yb2 - 0.04]) put(fenceGeoms, new THREE.BoxGeometry(0.02, 0.035, wdt + 0.04), 0.2, hy, u);
+    for (const e of [-1, 1]) put(fenceGeoms, new THREE.BoxGeometry(0.14, 0.03, 0.03), 0.13, yb2 - 0.05, u + e * wdt / 2);
+  };
+  for (let k = 0; k < n; k++) {
+    const u = 0.8 + (k + 0.5) * gp - RECESS;
+    win(u, wy, 0.025, 0.3, 0.45);
+    for (const e of [-1, 1]) box(concGeoms, 0.14, WIN_H + 0.12, 0.16, 0.07, wy, u + e * (WIN_W / 2 + 0.08));   // piédroits
+    box(concGeoms, 0.2, 0.3, WIN_W + 0.56, 0.1, sill + WIN_H + 0.15, u);                                        // linteau
+    box(concGeoms, 0.22, 0.12, WIN_W + 0.42, 0.11, sill - 0.06, u);                                             // appui
+    pad(0.11, sill, u, 0.22, WIN_W + 0.38, 0.1);
+    pad(0.1, sill + WIN_H + 0.3, u, 0.2, WIN_W + 0.5, 0.08);
+    grille(u, sill + 0.02, sill + WIN_H - 0.02, WIN_W + 0.1);
+    const bw = WIN_W * 0.8, bh = 0.5, by = SIDEWALK_H + 0.42;
+    const glass = new THREE.PlaneGeometry(bw, bh); glass.rotateY(eF > 0 ? 0 : Math.PI); glass.translate(xAt(u), by, Z(0.015)); basementGlass.push(glass);
+    box(concGeoms, 0.12, 0.1, bw + 0.3, 0.06, by + bh / 2 + 0.05, u);
+    box(concGeoms, 0.12, 0.08, bw + 0.3, 0.06, by - bh / 2 - 0.04, u);
+    grille(u, by - bh / 2, by + bh / 2, bw);
+  }
 }
 
 /* ---------------------------------------------------------------------
@@ -285,7 +389,7 @@ function buildStorefront(side, zc, w, o) {
   // --- Porte en retrait : à une extrémité (ou au centre pour le deli)
   const doorW = 1.15, doorEnd = o.isDeli ? 0 : (Math.random() < 0.5 ? -1 : 1);
   const dz0 = doorEnd === 0 ? zc - doorW / 2 : (doorEnd < 0 ? za : zb - doorW), dzm = dz0 + doorW / 2;
-  doorZones.push({ side, z0: dz0 - 0.3, z1: dz0 + doorW + 0.3 });  // porte de la boutique
+  ST.doorZones.push({ side, z0: dz0 - 0.3, z1: dz0 + doorW + 0.3 });  // porte de la boutique
   const segs = [];                                      // segments de vitrine [z1, z2]
   if (dz0 - za > 0.4) segs.push([za, dz0]);
   if (zb - (dz0 + doorW) > 0.4) segs.push([dz0 + doorW, zb]);
@@ -333,7 +437,7 @@ function buildStorefront(side, zc, w, o) {
       imat.uniforms.uWall.value = shopInteriorCache.get(kind);          // après le merge : pas de copie de texture
       if (!o.isDeli) imat.uniforms.uBright.value = 0.55;                 // le deli reste la vitrine la plus lumineuse
       const inner = new THREE.Mesh(new THREE.PlaneGeometry(L - 0.12, yGlass - yBulk), imat);
-      inner.position.set(fx(0.05), (yBulk + yGlass) / 2, zm); inner.rotation.y = rotY; scene.add(inner);
+      inner.position.set(fx(0.05), (yBulk + yGlass) / 2, zm); inner.rotation.y = rotY; ST.add(inner);
       // autocollants en bas de vitrine (1 à 3), plus rarement un néon en hauteur
       ensureDecalMats();
       const papers = DECALS.filter(d => !d.neon), neons = DECALS.filter(d => d.neon);
@@ -351,13 +455,13 @@ function buildStorefront(side, zc, w, o) {
         decalGeoms.neon.push(decalGeo(dec, fx(D - 0.045), yGlass - 0.3 - dec.size[1] / 2, z, rotY));
       }
       const trans = new THREE.Mesh(new THREE.PlaneGeometry(L - 0.12, yTrans - yGlass - 0.14), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 0.72, 0.5).multiplyScalar(o.isDeli ? 1 : 0.6) }));
-      trans.position.set(fx(0.04), (yGlass + yTrans) / 2, zm); trans.rotation.y = rotY; scene.add(trans);
+      trans.position.set(fx(0.04), (yGlass + yTrans) / 2, zm); trans.rotation.y = rotY; ST.add(trans);
     } else {
       // rideau à lames dans ses coulisses, cadenas au pied
       const H = yTrans - 0.3 - (y0 + 0.02), yc = (y0 + 0.02 + yTrans - 0.3) / 2;
       const m = MAT.shutter.clone(); m.map = shutterTex.clone(); m.map.repeat.set(L / 2.4, H / 2.7); m.map.needsUpdate = true;
       usePhoto(m, 'painted_metal_shutter', L / 2, H / 2, mm => { mm.metalness = 0.35; });        // photo : tuile de 2 m
-      const sh = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.06, H, L - 0.12), m)); sh.position.set(fx(D - 0.08), yc, zm); scene.add(sh);
+      const sh = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.06, H, L - 0.12), m)); sh.position.set(fx(D - 0.08), yc, zm); ST.add(sh);
       for (const z of [z1 + 0.04, z2 - 0.04]) box(frame, 0.1, H, 0.08, fx(D - 0.06), yc, z);
       box(iron, 0.05, 0.08, L * 0.5, fx(D - 0.02), y0 + 0.42, zm);
       box(iron, 0.06, 0.14, 0.1, fx(D - 0.0), y0 + 0.36, zm);
@@ -369,19 +473,19 @@ function buildStorefront(side, zc, w, o) {
     snowPad(fx(D - 0.1), yTrans + 0.02, zc, 0.3, w + 0.06, 0.12);
     const H = 2.4, m = MAT.shutter.clone(); m.map = shutterTex.clone(); m.map.repeat.set(doorW / 2.4, H / 2.7); m.map.needsUpdate = true;
     usePhoto(m, 'painted_metal_shutter', doorW / 2, H / 2, mm => { mm.metalness = 0.35; });
-    const sh = new THREE.Mesh(new THREE.BoxGeometry(0.05, H, doorW - 0.1), m); sh.position.set(fx(0.16), y0 + 0.12 + H / 2, dzm); scene.add(sh);
+    const sh = new THREE.Mesh(new THREE.BoxGeometry(0.05, H, doorW - 0.1), m); sh.position.set(fx(0.16), y0 + 0.12 + H / 2, dzm); ST.add(sh);
   } else {
     // néon OPEN dans la vitrine la plus proche de la porte, lumière intérieure
     const seg = segs[doorEnd < 0 ? 0 : segs.length - 1];
     if (seg) {
       openSignTex = openSignTex || makeOpenSignTexture();
       const os = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.3), new THREE.MeshBasicMaterial({ map: openSignTex, color: new THREE.Color().setScalar(o.isDeli ? 1.8 : 1.1) }));
-      os.position.set(fx(D - 0.07), 2.05, doorEnd < 0 ? seg[1] - 0.5 : seg[0] + 0.5); os.rotation.y = rotY; scene.add(os);
+      os.position.set(fx(D - 0.07), 2.05, doorEnd < 0 ? seg[1] - 0.5 : seg[0] + 0.5); os.rotation.y = rotY; ST.add(os);
     }
-    addPointSource({ pos: new THREE.Vector3(fx(1.1), 2.5, zc), color: new THREE.Color(0xffc98a), intensity: 7, distance: 9 });
+    addPointSource({ pos: ST.toWorld(new THREE.Vector3(fx(1.1), 2.5, zc)), color: new THREE.Color(0xffc98a), intensity: 7, distance: 9 });
     // climatiseur planté dans l'imposte, une fois sur deux
     if (Math.random() < 0.5) {
-      const ac = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), MAT.concrete)); ac.position.set(fx(0.3), yGlass + 0.28, dzm + (doorEnd < 0 ? 1.6 : -1.6)); scene.add(ac);
+      const ac = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), MAT.concrete)); ac.position.set(fx(0.3), yGlass + 0.28, dzm + (doorEnd < 0 ? 1.6 : -1.6)); ST.add(ac);
       snowPad(fx(0.3), yGlass + 0.48, dzm + (doorEnd < 0 ? 1.6 : -1.6), 0.46, 0.56, 0.11);
     }
   }
@@ -394,7 +498,7 @@ function buildStorefront(side, zc, w, o) {
     ? new THREE.MeshBasicMaterial({ map: makeSignTexture(name, true), color: new THREE.Color().setScalar(o.isDeli ? 1.25 : 0.5) })
     : new THREE.MeshStandardMaterial({ map: makeSignTexture(name, false), roughness: 0.6, metalness: 0 });
   const sign = new THREE.Mesh(new THREE.BoxGeometry(D + 0.12, ySign1 - ySign0, w + 0.1), signMats);
-  sign.position.set(fx((D + 0.12) / 2), (ySign0 + ySign1) / 2, zc); scene.add(sign);
+  sign.position.set(fx((D + 0.12) / 2), (ySign0 + ySign1) / 2, zc); ST.add(sign);
   snowPad(fx((D + 0.16) / 2), ySign1, zc, D + 0.16, w + 0.14, 0.16);
   if (signLit) {
     // cols de cygne : bras, réflecteur, ampoule visible ; une lumière pour l'ensemble
@@ -403,10 +507,10 @@ function buildStorefront(side, zc, w, o) {
       const z = za + (k + 0.5) * (w / n), reach = D + 0.5;
       box(iron, reach - D + 0.1, 0.03, 0.03, fx((D + reach) / 2), ySign1 + 0.32, z);
       box(iron, 0.03, 0.3, 0.03, fx(reach), ySign1 + 0.17, z);
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.14, 12), MAT.metal); cone.position.set(fx(reach), ySign1 + 0.06, z); scene.add(cone);
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.0, 1.2) })); bulb.position.set(fx(reach), ySign1 - 0.02, z); scene.add(bulb);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.14, 12), MAT.metal); cone.position.set(fx(reach), ySign1 + 0.06, z); ST.add(cone);
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.0, 1.2) })); bulb.position.set(fx(reach), ySign1 - 0.02, z); ST.add(bulb);
     }
-    addPointSource({ pos: new THREE.Vector3(fx(D + 0.6), ySign1 - 0.2, zc), color: new THREE.Color(0xffe2b0), intensity: 4, distance: 7 });
+    addPointSource({ pos: ST.toWorld(new THREE.Vector3(fx(D + 0.6), ySign1 - 0.2, zc)), color: new THREE.Color(0xffe2b0), intensity: 4, distance: 7 });
   }
 
   // --- Store à lambrequin sous l'enseigne, incliné vers la rue, neige dessus
@@ -421,10 +525,10 @@ function buildStorefront(side, zc, w, o) {
     valMats[side < 0 ? 0 : 1] = new THREE.MeshStandardMaterial({ map: makeValanceTexture(name, awColor), roughness: 0.9 });
     const reach = 1.45, drop = 0.42, ang = Math.atan2(drop, reach), rz = side * ang;
     const mkSlope = (bw, bh, bd, dy) => { const g = new THREE.BoxGeometry(bw, bh, bd); g.rotateZ(rz); g.translate(fx(D + 0.05 + reach / 2), ySign0 - 0.04 - drop / 2 + dy, zc); return g; };
-    const canvas = shadowed(new THREE.Mesh(mkSlope(reach, 0.05, w + 0.2, 0), awTop)); scene.add(canvas);
-    const valance = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.3, w + 0.2), valMats); valance.position.set(fx(D + 0.05 + reach), ySign0 - 0.04 - drop - 0.13, zc); scene.add(valance);
+    const canvas = shadowed(new THREE.Mesh(mkSlope(reach, 0.05, w + 0.2, 0), awTop)); ST.add(canvas);
+    const valance = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.3, w + 0.2), valMats); valance.position.set(fx(D + 0.05 + reach), ySign0 - 0.04 - drop - 0.13, zc); ST.add(valance);
     // passepoil clair au bas du lambrequin : c'est lui qu'on lit de nuit, la toile elle-même reste sombre
-    const piping = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.035, w + 0.22), paintMat(0xd8d0c0, 0.8, 0)); piping.position.set(fx(D + 0.05 + reach), ySign0 - 0.04 - drop - 0.28, zc); scene.add(piping);
+    const piping = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.035, w + 0.22), paintMat(0xd8d0c0, 0.8, 0)); piping.position.set(fx(D + 0.05 + reach), ySign0 - 0.04 - drop - 0.28, zc); ST.add(piping);
     for (let k = 0; k <= 2; k++) iron.push((() => { const g = new THREE.BoxGeometry(reach, 0.03, 0.03); g.rotateZ(rz); g.translate(fx(D + 0.05 + reach / 2), ySign0 - 0.08 - drop / 2, za + k * (w / 2)); return g; })());
     snowPad(fx(D + 0.05 + reach / 2), ySign0 - 0.04 - drop / 2 + 0.025, zc, reach - 0.1, w + 0.2, 0.18, rz);   // inclinée comme la toile
   }
@@ -435,17 +539,17 @@ function buildStorefront(side, zc, w, o) {
     g.scale(0.38, 0.2 + Math.random() * 0.14, w / 2 * 0.92); g.translate(fx(D + 0.12), y0, zc); snowGeoms.push(g);
   }
 
-  scene.add(shadowed(new THREE.Mesh(mergeGeometries(frame), frameMat)));
-  scene.add(new THREE.Mesh(mergeGeometries(glass), MAT.storeGlass));
-  if (iron.length) scene.add(new THREE.Mesh(mergeGeometries(iron), MAT.iron));
-  if (decalGeoms.paper.length) scene.add(new THREE.Mesh(mergeGeometries(decalGeoms.paper), decalPaperMat));
-  if (decalGeoms.neon.length) scene.add(new THREE.Mesh(mergeGeometries(decalGeoms.neon), decalNeonMat));
-  addCollider(fx((D + 0.1) / 2), zc, (D + 0.1) / 2, w / 2 + 0.5);
+  ST.add(shadowed(new THREE.Mesh(mergeGeometries(frame), frameMat)));
+  ST.add(new THREE.Mesh(mergeGeometries(glass), MAT.storeGlass));
+  if (iron.length) ST.add(new THREE.Mesh(mergeGeometries(iron), MAT.iron));
+  if (decalGeoms.paper.length) ST.add(new THREE.Mesh(mergeGeometries(decalGeoms.paper), decalPaperMat));
+  if (decalGeoms.neon.length) ST.add(new THREE.Mesh(mergeGeometries(decalGeoms.neon), decalNeonMat));
+  ST.collider(fx((D + 0.1) / 2), zc, (D + 0.1) / 2, w / 2 + 0.5);
   const sbx = [faceX, fx(D + 0.6)];
   addSubject({
     label: o.isDeli ? 'La devanture du deli' : open ? `La vitrine « ${name} »` : 'Un rideau de fer baissé',
     value: o.isDeli ? 0.85 : open ? 0.6 : 0.35, glows: open,
-    box: new THREE.Box3(new THREE.Vector3(Math.min(...sbx), y0, za - 0.3), new THREE.Vector3(Math.max(...sbx), ySign1 + 0.4, zb + 0.3)),
+    box: ST.box(new THREE.Box3(new THREE.Vector3(Math.min(...sbx), y0, za - 0.3), new THREE.Vector3(Math.max(...sbx), ySign1 + 0.4, zb + 0.3))),
   });
 }
 
@@ -535,8 +639,8 @@ function buildEntrance(side, z, yDoor) {
   // imposte : une seule vitre, le numéro de l'immeuble à la feuille d'or (pairs à gauche, impairs à droite)
   const num = 2 * Math.floor(rnd(40, 240)) + (side > 0 ? 1 : 0);
   const tr = new THREE.Mesh(new THREE.PlaneGeometry(DW - 0.06, 0.5), new THREE.MeshBasicMaterial({ map: makeTransomTexture(num), color: hallGlassMat.color }));
-  tr.rotation.y = rotY; tr.position.set(X(0.035), yDoor + DH + 0.3, z); scene.add(tr);
-  addSubject({ label: `Une porte de brownstone, n° ${num}`, value: 0.6, glows: true, box: boxAt(X(0.3), z, 0.3, DW / 2 + 0.45, yDoor - 0.9, yDoor + DH + 1.1) });
+  tr.rotation.y = rotY; tr.position.set(X(0.035), yDoor + DH + 0.3, z); ST.add(tr);
+  addSubject({ label: `Une porte de brownstone, n° ${num}`, value: 0.6, glows: true, box: ST.box(boxAt(X(0.3), z, 0.3, DW / 2 + 0.45, yDoor - 0.9, yDoor + DH + 1.1)) });
   box(door, 0.07, 0.07, DW, X(0.05), yDoor + DH + 0.035, z); stileUV(door[door.length - 1]);                   // traverse d'imposte
   // chambranle : montants et linteau en bois autour de la baie
   for (const e of [-1, 1]) { box(door, 0.1, DH + 0.6, 0.07, X(0.05), yDoor + (DH + 0.6) / 2, z + e * (DW / 2 + 0.01)); stileUV(door[door.length - 1]); }
@@ -560,19 +664,19 @@ function buildEntrance(side, z, yDoor) {
   }
   const slot = new THREE.BoxGeometry(0.012, 0.05, 0.28); slot.translate(X(0.066), yDoor + 0.78, z - DW / 4); brass.push(slot);   // fente à courrier
   box(door, 0.08, DH, 0.045, X(0.07), yDoor + DH / 2, z); stileUV(door[door.length - 1]);                     // battement central
-  scene.add(shadowed(new THREE.Mesh(mergeGeometries(door), doorMaterial())));
-  scene.add(new THREE.Mesh(mergeGeometries(lit), hallGlassMat));
-  scene.add(new THREE.Mesh(mergeGeometries(brass), brassMat));
+  ST.add(shadowed(new THREE.Mesh(mergeGeometries(door), doorMaterial())));
+  ST.add(new THREE.Mesh(mergeGeometries(lit), hallGlassMat));
+  ST.add(new THREE.Mesh(mergeGeometries(brass), brassMat));
   // lanterne murale sur potence, à côté de la porte
   const lz = z + (DW / 2 + 0.55), ly = yDoor + DH + 0.25;
   const arm = new THREE.BoxGeometry(0.28, 0.03, 0.03); arm.translate(X(0.14), ly + 0.25, lz); fenceGeoms.push(arm);
   const cage = new THREE.CylinderGeometry(0.09, 0.07, 0.3, 6, 1, true); cage.translate(X(0.28), ly + 0.05, lz); fenceGeoms.push(cage);
   const cap = new THREE.ConeGeometry(0.12, 0.1, 6); cap.translate(X(0.28), ly + 0.25, lz); fenceGeoms.push(cap);
   const bulb = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.055, 0.26, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 1.6, 0.8) }));
-  bulb.position.set(X(0.28), ly + 0.05, lz); scene.add(bulb);
+  bulb.position.set(X(0.28), ly + 0.05, lz); ST.add(bulb);
   // la lumière part d'entre la lanterne et la porte, un peu devant : posée à la lanterne, elle
   // arrivait en rasant sur les vantaux au fond de l'embrasure et la porte restait noire
-  addPointSource({ pos: new THREE.Vector3(X(0.85), yDoor + DH - 0.1, z + 0.45), color: new THREE.Color(0xffc27a), intensity: 5, distance: 6 });
+  addPointSource({ pos: ST.toWorld(new THREE.Vector3(X(0.85), yDoor + DH - 0.1, z + 0.45)), color: new THREE.Color(0xffc27a), intensity: 5, distance: 6 });
 }
 
 /** Perron de brownstone + clôture en fer forgé (comme la zone grillagée de l'image). */
@@ -582,12 +686,12 @@ function buildStoop(side, z, depthZ) {
   const steps = 5;
   for (let i = 0; i < steps; i++) {
     const w = 0.27, h = 0.18 * (i + 1), x = faceX + ox * (0.135 + (steps - 1 - i) * w);
-    const s = shadowed(new THREE.Mesh(stepGeo(w, h, 2.2), MAT.stone)); s.position.set(x, SIDEWALK_H + h / 2, z); scene.add(s);
+    const s = shadowed(new THREE.Mesh(stepGeo(w, h, 2.2), MAT.stone)); s.position.set(x, SIDEWALK_H + h / 2, z); ST.add(s);
     snowPad(x, SIDEWALK_H + h, z, w, 2.2, 0.1);
   }
   buildEntrance(side, z, SIDEWALK_H + 0.18 * steps);
-  addCollider(faceX + ox * 0.7, z, 0.72, 1.15);
-  doorZones.push({ side, z0: z - 1.7, z1: z + 1.7 });            // marches + ouverture de la clôture
+  ST.collider(faceX + ox * 0.7, z, 0.72, 1.15);
+  ST.doorZones.push({ side, z0: z - 1.7, z1: z + 1.7 });            // marches + ouverture de la clôture
 
   // clôture : lisse haute/basse + barreaux, le long de la façade, avec ouverture au perron
   const fx = faceX + ox * 1.6, half = Math.min(depthZ / 2 - 0.5, 6.5);
@@ -600,14 +704,14 @@ function buildStoop(side, z, depthZ) {
     snowPad(fx, SIDEWALK_H + 1.075, zm, 0.08, L, 0.06, 0, 0.3);                  // neige sur la lisse haute
     for (let p = za; p <= zb; p += 0.16) mk(new THREE.CylinderGeometry(0.015, 0.015, 1.15, 5), fx, SIDEWALK_H + 0.6, p);
     for (let p = za; p <= zb + 0.01; p += Math.max(L / 3, 1.5)) mk(new THREE.BoxGeometry(0.08, 1.3, 0.08), fx, SIDEWALK_H + 0.65, Math.min(p, zb));
-    addCollider(fx, zm, 0.1, L / 2);
+    ST.collider(fx, zm, 0.1, L / 2);
   }
   // retours de clôture vers la façade
   for (const e of [-1, 1]) {
     mk(new THREE.BoxGeometry(1.6, 0.05, 0.05), faceX + ox * 0.8, SIDEWALK_H + 1.05, z + e * half);
     snowPad(faceX + ox * 0.8, SIDEWALK_H + 1.075, z + e * half, 1.6, 0.08, 0.06, 0, 0.3);
     for (let p = 0; p <= 1.6; p += 0.16) mk(new THREE.CylinderGeometry(0.015, 0.015, 1.15, 5), faceX + ox * p, SIDEWALK_H + 0.6, z + e * half);
-    addCollider(faceX + ox * 0.8, z + e * half, 0.8, 0.1);
+    ST.collider(faceX + ox * 0.8, z + e * half, 0.8, 0.1);
   }
 }
 
@@ -683,88 +787,138 @@ function buildFireEscape(side, z, height, baseH) {
   bar(0.03, 1.2, 0.03, X(lx), baseH + 0.4, lz + 0.35);                    // câble / tige du contrepoids
   bar(0.12, 0.35, 0.12, X(lx), baseH - 0.3, lz + 0.35);                   // contrepoids
   addSubject({ label: 'Un escalier de secours enneigé', value: 0.6,
-    box: new THREE.Box3(new THREE.Vector3(Math.min(faceX, X(depth + 0.1)), baseH - 1.8, z - w / 2 - 0.2), new THREE.Vector3(Math.max(faceX, X(depth + 0.1)), baseH + 1 + floors * 3.2 + 1.2, z + w / 2 + 0.2)) });
+    box: ST.box(new THREE.Box3(new THREE.Vector3(Math.min(faceX, X(depth + 0.1)), baseH - 1.8, z - w / 2 - 0.2), new THREE.Vector3(Math.max(faceX, X(depth + 0.1)), baseH + 1 + floors * 3.2 + 1.2, z + w / 2 + 0.2))) });
 }
 
-// Génération des deux rangées
+// Génération des rangées, rue par rue
 export let deliZ = null;
-/** Emprises à garder LIBRES au pied des façades : perrons (marches + ouverture de la clôture)
- *  et portes de boutique. Lues par props.js, qui est construit après : des poubelles et des
- *  congères tirées au hasard le long des murs tombaient sinon au milieu des marches. */
-export const doorZones = [];
-/** Distance (le long de la rue) de z à la plus proche emprise de ce côté ; 0 si z est dedans. */
-export function doorGap(side, z) {
+/** Emprises à garder LIBRES au pied des façades (rangées dans st.doorZones) : perrons (marches +
+ *  ouverture de la clôture) et portes de boutique. Lues par props.js, qui est construit après :
+ *  des poubelles et des congères tirées au hasard le long des murs tombaient sinon au milieu des marches. */
+/** Distance (le long de la rue st) de z à la plus proche emprise de ce côté ; 0 si z est dedans. */
+export function doorGap(st, side, z) {
   let best = Infinity;
-  for (const d of doorZones) if (d.side === side) best = Math.min(best, Math.max(0, d.z0 - z, z - d.z1));
+  for (const d of st.doorZones) if (d.side === side) best = Math.min(best, Math.max(0, d.z0 - z, z - d.z1));
   return best;
 }
-{
-  let z = STREET_Z_MIN - 12;
-  while (z < STREET_Z_MAX + 12) {
-    const depthZ = rnd(11, 17);
-    for (const side of [-1, 1]) {
-      const height = rnd(14, 30);
-      // Le deli est le premier immeuble de gauche dont l'emprise dépasse z = −14 :
-      // il existe toujours exactement un tel immeuble (l'ancien test « début dans
-      // (−24, −8) » pouvait ne rien attraper, et le néon se retrouvait sur un perron).
-      const isDeli = side === -1 && deliZ === null && z + depthZ > -14;
-      // Côté gauche (celui que le joueur longe, celui du deli) : enfilade de
-      // devantures comme sur la référence. Côté droit : plus résidentiel, ce qui
-      // laisse la place aux perrons et aux voitures garées.
-      const storefront = isDeli || Math.random() < (side === -1 ? 0.62 : 0.24);
-      const b = buildBuilding(side, z, depthZ, height, {
-        // peu de commerces ouverts : sur le modèle, la plupart ont baissé le rideau et le deli est
-        // la seule vraie vitrine allumée de l'enfilade
-        isDeli, storefront, storefrontLight: isDeli || (storefront && Math.random() < 0.28),
-        awning: isDeli || Math.random() < 0.5,
-        stoop: !storefront && Math.random() < 0.75,
-        stoopOffset: rnd(-1, 1) * (depthZ / 2 - 3),
-        fireEscape: Math.random() < 0.75,
-        escapeOffset: rnd(-1, 1) * (depthZ / 2 - 2.5),
-        waterTower: Math.random() < 0.3,
-      });
-      if (isDeli) deliZ = b.cz;
-    }
-    z += depthZ + 0.5;
-  }
-  if (deliZ === null) deliZ = -14;
+
+/** `chunks` : limites de tronçons (z de la rue) ; les fusions sont faites tronçon par tronçon et
+ *  rangée par rangée (voir LEFT_CHUNKS, street.js) — sans limites, une seule fusion pour la rue. */
+function beginStreet(st, warm = 1, chunks = []) {
+  ST = st; ST.warm = warm; ST.chunks = chunks;
+  resetAccumulators();
+}
+function resetAccumulators() {
+  frameInst = []; litInst = [[], [], []]; darkInst = []; shadeInst = [[], [], []];
+  escGeoms = []; fenceGeoms = []; concGeoms = []; snowGeoms = []; basementGlass = []; plinthGeoms = [];
 }
 
-// Instanciation des fenêtres : cadres, vitres éteintes, trois types d'intérieurs allumés (nu / rideaux / stores)
-{
+/** Une rangée d'immeubles du côté `side` de la rue en construction, de zFrom à zTo EXACTEMENT
+ *  (le dernier immeuble prend ce qui reste) : aux coins, les rangées se touchent sans trou ni
+ *  chevauchement. `pShop` : part de commerces ; `opt(z, depthZ)` : réglages imposés. */
+function buildRow(side, zFrom, zTo, pShop, opt = () => ({})) {
+  let z = zFrom, nb = 0;
+  if (ST.chunks.length) flushChunk();                 // rue en tronçons : chaque rangée a ses fusions
+  while (nb < ST.chunks.length && ST.chunks[nb] <= zFrom) nb++;
+  while (zTo - z > 6) {
+    if (nb < ST.chunks.length && z >= ST.chunks[nb]) {  // limite de tronçon franchie : on fusionne ce qui précède
+      flushChunk();
+      while (nb < ST.chunks.length && ST.chunks[nb] <= z) nb++;
+    }
+    const rem = zTo - z;
+    const depthZ = rem <= 17.5 ? rem : rem < 22.5 ? rem / 2 - 0.25 : rnd(11, Math.min(17, rem - 11.5));
+    const height = rnd(14, 30), o = opt(z, depthZ);
+    // Le deli (rue principale) est le premier immeuble de gauche dont l'emprise dépasse z = −14 :
+    // il existe toujours exactement un tel immeuble (l'ancien test « début dans
+    // (−24, −8) » pouvait ne rien attraper, et le néon se retrouvait sur un perron).
+    const isDeli = ST === MAIN && side === -1 && deliZ === null && z + depthZ > -14;
+    const storefront = isDeli || (o.storefront ?? Math.random() < pShop);
+    const b = buildBuilding(side, z, depthZ, height, {
+      // peu de commerces ouverts : sur le modèle, la plupart ont baissé le rideau et le deli est
+      // la seule vraie vitrine allumée de l'enfilade
+      isDeli, storefront, storefrontLight: isDeli || (storefront && Math.random() < 0.28),
+      awning: isDeli || Math.random() < 0.5,
+      stoop: !storefront && Math.random() < 0.75,
+      stoopOffset: rnd(-1, 1) * (depthZ / 2 - 3),
+      fireEscape: Math.random() < 0.75,
+      escapeOffset: rnd(-1, 1) * (depthZ / 2 - 2.5),
+      waterTower: Math.random() < 0.3,
+      ...o,
+    });
+    if (isDeli) deliZ = b.cz;
+    z += depthZ + 0.5;
+  }
+}
+
+/** Fusionne et pose tout ce qui a été accumulé (fenêtres instanciées, pierre, fonte, neige) puis
+ *  repart de zéro : appelé à chaque limite de tronçon et en fin de rue. */
+function flushChunk() {
+  if (!frameInst.length && !concGeoms.length && !escGeoms.length && !fenceGeoms.length) { resetAccumulators(); return; }
+  // Instanciation des fenêtres : cadres, vitres éteintes, trois types d'intérieurs allumés (nu / rideaux / stores)
   const frames = new THREE.InstancedMesh(winFrameGeo, MAT.paint, frameInst.length);
-  frameInst.forEach((m, i) => frames.setMatrixAt(i, m)); frames.castShadow = true; scene.add(frames);
+  frameInst.forEach((m, i) => frames.setMatrixAt(i, m)); frames.castShadow = true; ST.add(frames);
   const dark = new THREE.InstancedMesh(winGlassGeo, MAT.glass, darkInst.length);
-  darkInst.forEach((m, i) => dark.setMatrixAt(i, m)); scene.add(dark);
+  darkInst.forEach((m, i) => dark.setMatrixAt(i, m)); ST.add(dark);
   // fenêtres éteintes derrière lesquelles on devine un store ou des rideaux : matériau
   // éclairé (la lumière de la rue les accroche), un peu brillant comme la vitre devant
   shadeInst.forEach((list, v) => {
     if (!list.length) return;
-    const sh = new THREE.InstancedMesh(winGlassGeo, new THREE.MeshStandardMaterial({ map: winDarkTex[v], roughness: 0.3, metalness: 0, envMapIntensity: 1.4 }), list.length);
-    list.forEach((m, i) => sh.setMatrixAt(i, m)); scene.add(sh);
+    const sh = new THREE.InstancedMesh(winGlassGeo, shadeMats[v], list.length);
+    list.forEach((m, i) => sh.setMatrixAt(i, m)); ST.add(sh);
   });
   const c = new THREE.Color();
   litInst.forEach((list, v) => {
     if (!list.length) return;
-    const lit = new THREE.InstancedMesh(winGlassGeo, new THREE.MeshBasicMaterial({ map: winInteriorTex[v], color: 0xffffff }), list.length);
+    const lit = new THREE.InstancedMesh(winGlassGeo, litMats[v], list.length);
     list.forEach((m, i) => { lit.setMatrixAt(i, m); const k = 0.45 + Math.random() * 0.9; c.setHSL(0.06 + Math.random() * 0.06, 0.4 + Math.random() * 0.3, 0.6).multiplyScalar(k); lit.setColorAt(i, c); });
-    scene.add(lit);
+    ST.add(lit);
   });
+  // pierre reconstituée photo (tuile de 2,7 m ; UV worldBox en tuiles de 5,5 m) pour linteaux, appuis, corniches…
+  if (concGeoms.length) { const cm = weather(MAT.concrete.clone(), { strength: 0.75, frame: ST.frame, warm: ST.warm }); usePhoto(cm, 'concrete_wall_008', 5.5 / 2.7, 5.5 / 2.7); ST.add(shadowed(new THREE.Mesh(mergeGeometries(concGeoms), cm))); }
+  flushSnowPads(0);   // filet : tout est normalement déjà fusionné immeuble par immeuble
+  // Escaliers de secours et clôtures fusionnés (un seul mesh chacun → ombres et perf)
+  if (escGeoms.length) ST.add(shadowed(new THREE.Mesh(mergeGeometries(escGeoms.map(g => g.index ? g.toNonIndexed() : g)), escapeMat)));
+  if (fenceGeoms.length) ST.add(shadowed(new THREE.Mesh(mergeGeometries(fenceGeoms), MAT.iron)));
+  if (basementGlass.length) ST.add(new THREE.Mesh(mergeGeometries(basementGlass), MAT.glass));
+  // socle : même pierre, gardée gris granit par la couleur du matériau
+  if (plinthGeoms.length) { const pm = weather(MAT.granite.clone(), { strength: 0.8, frame: ST.frame, warm: ST.warm }); usePhoto(pm, 'concrete_wall_008', 5.5 / 2.7, 5.5 / 2.7); ST.add(shadowed(new THREE.Mesh(mergeGeometries(plinthGeoms), pm))); }
+  resetAccumulators();
 }
-// pierre reconstituée photo (tuile de 2,7 m ; UV worldBox en tuiles de 5,5 m) pour linteaux, appuis, corniches…
-if (concGeoms.length) { const cm = weather(MAT.concrete.clone(), { strength: 0.75 }); usePhoto(cm, 'concrete_wall_008', 5.5 / 2.7, 5.5 / 2.7); scene.add(shadowed(new THREE.Mesh(mergeGeometries(concGeoms), cm))); }
-flushSnowPads(0);   // filet : tout est normalement déjà fusionné immeuble par immeuble
-// Escaliers de secours et clôtures fusionnés (un seul mesh chacun → ombres et perf)
+function endStreet() { flushChunk(); ST = null; }
+
+// Matériaux partagés par toutes les rues : vitres à store / rideaux, intérieurs allumés, fonte des escaliers
+const shadeMats = winDarkTex.map(map => new THREE.MeshStandardMaterial({ map, roughness: 0.3, metalness: 0, envMapIntensity: 1.4 }));
+const litMats = winInteriorTex.map(map => new THREE.MeshBasicMaterial({ map, color: 0xffffff }));
 // fonte peinte en noir, écaillée et rouillée (même texture que les lampadaires, assombrie)
-if (escGeoms.length) {
-  const em = new THREE.MeshStandardMaterial({
-    map: lampPaint.map, roughnessMap: lampPaint.roughnessMap, normalMap: lampPaint.normalMap, normalScale: new THREE.Vector2(0.5, 0.5),
-    color: 0x6a6a6a, roughness: 1, metalness: 0.25, envMapIntensity: 1.1 });
-  // photo de rouille : on n'en garde que le RELIEF et la RUGOSITÉ (fonte piquée), la couleur reste la peinture noire écaillée
-  usePhoto(em, 'rust_coarse_01', 1, 1, m => { m.map = lampPaint.map; m.normalScale.set(0.7, 0.7); });
-  scene.add(shadowed(new THREE.Mesh(mergeGeometries(escGeoms.map(g => g.index ? g.toNonIndexed() : g)), em)));
-}
-if (fenceGeoms.length) scene.add(shadowed(new THREE.Mesh(mergeGeometries(fenceGeoms), MAT.iron)));
-if (basementGlass.length) scene.add(new THREE.Mesh(mergeGeometries(basementGlass), MAT.glass));
-// socle : même pierre, gardée gris granit par la couleur du matériau
-if (plinthGeoms.length) { const pm = weather(MAT.granite.clone(), { strength: 0.8 }); usePhoto(pm, 'concrete_wall_008', 5.5 / 2.7, 5.5 / 2.7); scene.add(shadowed(new THREE.Mesh(mergeGeometries(plinthGeoms), pm))); }
+const escapeMat = new THREE.MeshStandardMaterial({
+  map: lampPaint.map, roughnessMap: lampPaint.roughnessMap, normalMap: lampPaint.normalMap, normalScale: new THREE.Vector2(0.5, 0.5),
+  color: 0x6a6a6a, roughness: 1, metalness: 0.25, envMapIntensity: 1.1 });
+// photo de rouille : on n'en garde que le RELIEF et la RUGOSITÉ (fonte piquée), la couleur reste la peinture noire écaillée
+usePhoto(escapeMat, 'rust_coarse_01', 1, 1, m => { m.map = lampPaint.map; m.normalScale.set(0.7, 0.7); });
+
+/* Rue principale. Côté gauche (celui que le joueur longe, celui du deli) : enfilade de
+   devantures comme sur la référence. Côté droit : plus résidentiel, ce qui laisse la place aux
+   perrons et aux voitures garées. À gauche, la rangée s'arrête au coin de la rue de gauche
+   (façade de la transversale, z = CROSS_Z + FACADE_X) : l'immeuble d'angle a une 2e façade
+   tournée vers elle, et pas de boutique (son rez-de-chaussée d'habitation fait le tour du
+   coin). À droite, la rangée descend jusqu'à la façade d'en face de la transversale. */
+beginStreet(MAIN);
+buildRow(-1, CROSS_Z + FACADE_X, STREET_Z_MAX + 12, 0.62, z => (z < CROSS_Z + FACADE_X + 1 ? { endFacade: -1, storefront: false, stoop: false } : {}));
+buildRow(1, CROSS_Z - FACADE_X, STREET_Z_MAX + 12, 0.24);
+if (deliZ === null) deliZ = -14;
+endStreet();
+
+/* Rue de gauche : côté −1 (celui des feux) de son entrée jusqu'à l'immeuble d'angle de la rue
+   principale ; côté +1 (en face) jusqu'au droit des façades de droite de la rue principale :
+   il ferme le carrefour en T. Un peu plus commerçante que le côté droit de la rue principale. */
+beginStreet(LEFT, 1, LEFT_CHUNKS);
+buildRow(-1, LEFT_END_X, -(FACADE_X + 14.5), 0.4);
+buildRow(1, LEFT_END_X, FACADE_X, 0.35);
+endStreet();
+
+/* Fond de la rue de gauche : deux immeubles d'habitation en travers (impasse), sans perron ni
+   boutique : la chaussée arrive au pied des façades, sous la neige repoussée par les
+   chasse-neige ; une porte de plain-pied et sa lanterne chacun, la neige dégagée devant. */
+beginStreet(LEFT_END, 0);
+buildRow(-1, CROSS_Z - FACADE_X, CROSS_Z + FACADE_X, 0, (z, d) => ({ storefront: false, stoop: false, gradeDoor: true, stoopOffset: rnd(-1, 1) * (d / 2 - 2.5) }));
+endStreet();

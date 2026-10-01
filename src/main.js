@@ -4,7 +4,7 @@ import { lightLoop } from './core/lightLoop.js';
 import { WALK_SPEED, PLAYER_RADIUS } from './core/constants.js';
 import { collides } from './world/collisions.js';
 import { renderer } from './core/renderer.js';
-import { camera, scene } from './core/scene.js';
+import { camera, scene, sky } from './core/scene.js';
 import './core/environment.js';
 
 // Modules de décor : importés pour leurs effets de bord, dans l'ordre de construction.
@@ -17,6 +17,7 @@ import './world/ambience.js';
 import { updateTrafficLights } from './world/intersection.js';
 import { flickerLights } from './world/lightRegistry.js';
 import { initLightPool, updateLightPool, lightPool } from './world/lightPool.js';
+import { updateStreetVisibility, streetZones } from './world/street.js';
 
 import { WIND, snowFar, snowMid, updateSnow, updateLampUniforms } from './fx/snow.js';
 import { steamMats, updateSteam } from './fx/steam.js';
@@ -60,7 +61,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
@@ -102,6 +103,7 @@ window.__blizzard.tick = (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) f
 function frame(rawDt, t) {
   const dt = Math.min(rawDt, 0.05);
   const speed = updatePlayer(dt);
+  updateStreetVisibility(camera);                               // rue de gauche : on ne dessine que ce que l'ouverture du carrefour laisse voir
   if (updatePhotoGame(dt, t, speed)) updateScale();             // viseur / zoom : le champ de vision a changé
 
   updateLampUniforms();
@@ -134,6 +136,7 @@ function frame(rawDt, t) {
     if (f.neon) neonMat.color.setScalar(1.9 * k);
   }
   updateLightPool(dt, camera);                                  // lumières et ombres qui suivent le joueur (lit f.k)
+  sky.position.copy(camera.position); sky.updateMatrix();       // voûte centrée sur le joueur (matrices figées : à la main)
 
   composer.render();
   afterRenderPhoto(t);                                          // capture d'une photo demandée (tampon encore plein)

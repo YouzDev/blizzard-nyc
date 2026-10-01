@@ -1,31 +1,21 @@
 import * as THREE from 'three';
-import { ROAD_HALF, STREET_Z_MIN } from '../core/constants.js';
+import { ROAD_HALF, CROSS_Z } from '../core/constants.js';
 import { scene } from '../core/scene.js';
 import { flakeTex } from '../textures/index.js';
 import { MAT } from './materials.js';
-import { shadowed } from './collisions.js';
+import { shadowed, addCollider } from './collisions.js';
 import { addSubject } from '../game/subjects.js';
 
 /* =====================================================================
-   10 bis. CARREFOUR LOINTAIN : rue transversale + feux de circulation
-   Au bout de la rue (z ≈ −96), une transversale enneigée et deux potences
-   façon New York : mât d'angle, bras horizontal au-dessus de la voie, caisson
-   olive à trois lampes tourné vers le joueur, signal piéton sur le mât.
+   10 bis. CARREFOUR : feux de circulation
+   Au bout de la rue, la transversale (z = CROSS_Z) : à gauche elle devient la rue de
+   gauche, à droite la rangée d'immeubles continue (sol et immeubles : ground.js,
+   buildings.js). Deux potences façon New York aux coins : mât, bras horizontal au-dessus
+   de la voie, caisson olive à trois lampes tourné vers le joueur, signal piéton sur le mât.
    Les lampes sont hors brouillard mais volontairement ternes, avec un halo :
    à 100 m dans la tempête, un feu n'est qu'une tache de couleur.
    ===================================================================== */
-const CROSS_Z = STREET_Z_MIN - 6;          // axe de la transversale
-const CROSS_W = 13;
-
-// chaussée transversale + ses trottoirs, en neige tassée
-{
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(150, CROSS_W), new THREE.MeshStandardMaterial({ color: 0xb4bdcb, roughness: 1 }));
-  road.rotation.x = -Math.PI / 2; road.position.set(0, 0.02, CROSS_Z); road.receiveShadow = true; scene.add(road);
-  for (const s of [-1, 1]) {
-    const walk = new THREE.Mesh(new THREE.PlaneGeometry(150, 4), MAT.snow);
-    walk.rotation.x = -Math.PI / 2; walk.position.set(0, 0.16, CROSS_Z + s * (CROSS_W / 2 + 2)); scene.add(walk);
-  }
-}
+const CROSS_W = 13;                       // (place des mâts : 1 m derrière la bordure de la transversale)
 
 const signalMats = {
   housing: new THREE.MeshStandardMaterial({ color: 0x5a5212, roughness: 0.6, metalness: 0.3 }),
@@ -64,6 +54,7 @@ function buildSignal(side) {
   const ped = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.2), new THREE.MeshBasicMaterial({ color: 0xff7a1a, fog: false })); ped.position.set(px - side * 0.05, 2.7, pz + 0.14); g.add(ped);
 
   scene.add(g);
+  addCollider(px, pz, 0.2, 0.2);                 // on ne traverse plus les mâts
   signals.push({ lamps, halos, ped });
   addSubject({ label: 'Les feux du carrefour', value: 0.7, glows: true, object: g,
     moment: () => (trafficState === 'red' ? { pts: 4, why: 'feu au rouge' } : trafficState === 'yellow' ? { pts: 2, why: "feu à l'orange" } : null) });

@@ -2,12 +2,12 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ROAD_HALF } from '../core/constants.js';
 import { smoothNoise } from '../core/noise.js';
-import { scene } from '../core/scene.js';
 import { MAT } from './materials.js';
 import { addSubject } from '../game/subjects.js';
-import { addCollider, shadowed } from './collisions.js';
+import { shadowed } from './collisions.js';
 import { deliZ } from './buildings.js';
-import { addContactShadow } from './contactShadows.js';
+import { addContactShadowIn } from './contactShadows.js';
+import { MAIN, LEFT } from './street.js';
 import { grimeTex } from '../textures/index.js';
 import { makeAmbulanceLivery, makeTruckLivery, makeIceCreamLivery, makeVanLivery } from '../textures/liveries.js';
 
@@ -424,7 +424,7 @@ function buildCarBody(g, kind, paint, snowDepth, tailMat = carMats.tail) {
   return P;
 }
 
-function buildTaxi(x, z, rotY = 0) {
+function buildTaxi(x, z, rotY = 0, st = MAIN) {
   const g = new THREE.Group();
   const tailMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.4, 0.15, 0.1) });   // feux allumés (bloom)
   const P = buildCarBody(g, 'sedan', MAT.taxi, 1, tailMat);
@@ -437,9 +437,9 @@ function buildTaxi(x, z, rotY = 0) {
     g.add(new THREE.Mesh(pg, MAT.taxiSide));
   }
   const topSign = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.16, 0.24), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.3, 0.7) })); topSign.position.set(0, P.roofMax + CROWN + 0.08, 0.1); g.add(topSign);
-  g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
-  addCollider(x, z, P.W / 2 + 0.34, P.L / 2 + 0.4);
-  addContactShadow(x, z, P.W / 2 + 0.45, P.L / 2 + 0.35, 0.6, rotY, 6);
+  g.position.set(x, 0, z); g.rotation.y = rotY; st.add(g);
+  st.collider(x, z, P.W / 2 + 0.34, P.L / 2 + 0.4);
+  addContactShadowIn(st, x, z, P.W / 2 + 0.45, P.L / 2 + 0.35, 0.6, rotY, 6);
   addSubject({ label: 'Un taxi jaune enseveli', value: 0.9, object: g });
 }
 
@@ -447,14 +447,14 @@ function buildTaxi(x, z, rotY = 0) {
  *  voitures ne sont plus que des volumes sombres coiffés d'une épaisse couche de
  *  neige, roues à moitié prises dans la congère du chasse-neige. C'est cette file
  *  de véhicules qui donne l'échelle et la profondeur de la rue. */
-function buildParkedCar(x, z, rotY, bodyColor, snowDepth = 1, kind = 'sedan') {
+function buildParkedCar(x, z, rotY, bodyColor, snowDepth = 1, kind = 'sedan', st = MAIN) {
   const g = new THREE.Group();
   // vernis (clearcoat) : une 2e couche brillante par-dessus la peinture — les lampadaires y glissent en reflets nets
   const paint = new THREE.MeshPhysicalMaterial({ color: bodyColor, roughness: 0.4, metalness: 0.45, clearcoat: 1, clearcoatRoughness: 0.1 });
   const P = buildCarBody(g, kind, paint, snowDepth);
-  g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
-  addCollider(x, z, P.W / 2 + 0.34, P.L / 2 + 0.4);   // jusqu'aux congères latérales et aux pare-chocs
-  addContactShadow(x, z, P.W / 2 + 0.45, P.L / 2 + 0.35, 0.6, rotY, 6);
+  g.position.set(x, 0, z); g.rotation.y = rotY; st.add(g);
+  st.collider(x, z, P.W / 2 + 0.34, P.L / 2 + 0.4);   // jusqu'aux congères latérales et aux pare-chocs
+  addContactShadowIn(st, x, z, P.W / 2 + 0.45, P.L / 2 + 0.35, 0.6, rotY, 6);
   addSubject({ label: 'Une voiture ensevelie sous la neige', value: 0.4, object: g });
 }
 
@@ -487,7 +487,7 @@ function liveryPlanes(g, P, tex, [u0, u1, y0, y1]) {
   }
 }
 
-function buildSpecialVehicle(kind, x, z, rotY, snowDepth = 1) {
+function buildSpecialVehicle(kind, x, z, rotY, snowDepth = 1, st = MAIN) {
   const S = SPECIALS[kind], g = new THREE.Group();
   const paint = new THREE.MeshPhysicalMaterial({ color: S.color, roughness: 0.4, metalness: 0.1, clearcoat: 1, clearcoatRoughness: 0.12 });
   const P = buildCarBody(g, kind, paint, snowDepth);
@@ -516,9 +516,9 @@ function buildSpecialVehicle(kind, x, z, rotY, snowDepth = 1) {
     // porte roulante à l'arrière de la caisse
     const door = new THREE.Mesh(new THREE.PlaneGeometry(P.W * 0.8, 2.1), MAT.shutter); door.rotation.y = Math.PI; door.position.set(0, 1.95, P.uR - NOSE - 0.01); g.add(door);
   }
-  g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
-  addCollider(x, z, P.W / 2 + 0.34, P.L / 2 + 0.4);
-  addContactShadow(x, z, P.W / 2 + 0.45, P.L / 2 + 0.35, 0.62, rotY, 8);
+  g.position.set(x, 0, z); g.rotation.y = rotY; st.add(g);
+  st.collider(x, z, P.W / 2 + 0.34, P.L / 2 + 0.4);
+  addContactShadowIn(st, x, z, P.W / 2 + 0.45, P.L / 2 + 0.35, 0.62, rotY, 8);
   const sub = SPECIAL_SUBJECTS[kind];
   addSubject({ label: sub.label, value: sub.value, object: g, moment: sub.moment });
 }
@@ -568,5 +568,21 @@ const CAR_COLORS = [0x1b232e, 0x2c2320, 0x353a41, 0x1f2a33, 0x101215, 0x4a1f1b, 
   slots.forEach(([side, z], i) => {
     const depth = 0.8 + Math.random() * 0.5, sp = specialAt.get(i);
     if (sp) buildSpecialVehicle(sp, side * (ROAD_HALF - 1.35), z, side < 0 ? 0 : Math.PI, depth); else park(side, z, depth);
+  });
+}
+
+// Rue de gauche : voitures garées des deux côtés et un taxi, avec des trous ; rien dans le
+// carrefour ni contre la neige poussée au fond de l'impasse.
+{
+  let ci = 3;
+  const kinds = ['suv', 'sedan', 'hatch', 'sedan', 'suv', 'sedan', 'hatch', 'sedan', 'sedan', 'suv', 'hatch'];
+  const slots = [...[-95, -78, -61, -44, -29].map(z => [-1, z]), ...[-100, -84, -69, -52, -36, -21].map(z => [1, z])];
+  const taxiAt = Math.floor(Math.random() * slots.length);
+  slots.forEach(([side, z], i) => {
+    if (Math.random() < 0.18) return;                           // une place libre de temps en temps
+    const x = side * (ROAD_HALF - 1.3), rotY = (side < 0 ? 0 : Math.PI) + side * 0.01 * ((ci % 3) - 1), depth = 0.8 + Math.random() * 0.5;
+    if (i === taxiAt) buildTaxi(x, z, rotY, LEFT);
+    else buildParkedCar(x, z, rotY, CAR_COLORS[ci % CAR_COLORS.length], depth, kinds[ci % kinds.length], LEFT);
+    ci++;
   });
 }

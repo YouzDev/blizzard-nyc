@@ -1,16 +1,16 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ROAD_HALF, FACADE_X, SIDEWALK_H, STREET_Z_MIN, STREET_Z_MAX, FOG_DENSITY, LAMP_Z0, LAMP_PITCH } from '../core/constants.js';
+import { ROAD_HALF, FACADE_X, SIDEWALK_H, STREET_Z_MIN, STREET_Z_MAX, FOG_DENSITY, LAMP_Z0, LAMP_PITCH, CROSS_Z, LEFT_END_X } from '../core/constants.js';
 import { rnd, smoothNoise } from '../core/noise.js';
-import { scene } from '../core/scene.js';
 import { lampPaint, glowTex } from '../textures/index.js';
 import { usePhoto } from '../textures/photo.js';
 import { MAT } from './materials.js';
-import { addCollider, shadowed } from './collisions.js';
+import { shadowed } from './collisions.js';
 import { flickerLights, lampPositions, addPointSource, addSpotSource } from './lightRegistry.js';
-import { addContactShadow } from './contactShadows.js';
+import { addContactShadowIn } from './contactShadows.js';
 import { doorGap } from './buildings.js';
 import { addSubject, boxAt } from '../game/subjects.js';
+import { MAIN, LEFT, LEFT_END } from './street.js';
 
 /* =====================================================================
    7. LAMPADAIRES ORNEMENTAUX, POUBELLES, BOUCHES D'INCENDIE, CONGÈRES
@@ -122,7 +122,7 @@ function placed(geo, x, y, z, rx = 0, ry = 0, rz = 0) {
   return g;
 }
 
-function buildLamppost(x, z, side) {
+function buildLamppost(st, x, z, side) {
   const g = new THREE.Group(), metal = [], snow = [];
   // socle tourné (profil ornemental)
   const profile = [[0, 0], [0.36, 0], [0.36, 0.12], [0.3, 0.18], [0.3, 0.4], [0.22, 0.5], [0.2, 0.9], [0.24, 1.0], [0.16, 1.1], [0.1, 1.2]].map(p => new THREE.Vector2(p[0], p[1]));
@@ -197,7 +197,7 @@ function buildLamppost(x, z, side) {
   // diffusion tout autour de la lanterne (voir glowFS)
   const GLOW_R = 4.5;
   const glowMat = new THREE.ShaderMaterial({
-    uniforms: { uCenter: { value: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z) }, uColor: { value: new THREE.Color(0.3, 0.23, 0.15) }, uR: { value: GLOW_R }, uFog: { value: FOG_DENSITY } },
+    uniforms: { uCenter: { value: st.toWorld(new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z)) }, uColor: { value: new THREE.Color(0.3, 0.23, 0.15) }, uR: { value: GLOW_R }, uFog: { value: FOG_DENSITY } },
     vertexShader: glowVS, fragmentShader: glowFS,
     transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
   });
@@ -210,24 +210,24 @@ function buildLamppost(x, z, side) {
   // joueur, voir world/lightPool.js.
   const flick = { lights: [], base: [], halos, uK, seed: Math.random() * 10 };
   flickerLights.push(flick);
-  addSpotSource({ pos: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z), target: new THREE.Vector3(x + lantX * 1.4, SIDEWALK_H, z),
+  addSpotSource({ pos: st.toWorld(new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z)), target: st.toWorld(new THREE.Vector3(x + lantX * 1.4, SIDEWALK_H, z)),
     color: new THREE.Color(0xffcc94), intensity: 82, distance: 30, angle: 1.1, penumbra: 0.8, flick });
   // Remplissage : c'est lui qui décolle les façades du noir. Sur la référence, la
   // brique autour de chaque lampadaire est nettement lisible ; sans ce point, on
   // n'a qu'un mur noir et une flaque de lumière au sol.
-  addPointSource({ pos: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y + 0.1, z), color: new THREE.Color(0xffb266), intensity: 14, distance: 24, flick });
+  addPointSource({ pos: st.toWorld(new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y + 0.1, z)), color: new THREE.Color(0xffb266), intensity: 14, distance: 24, flick });
 
-  g.position.set(x, SIDEWALK_H, z); scene.add(g);
+  g.position.set(x, SIDEWALK_H, z); st.add(g);
   // emprise explicite : la boîte du groupe engloberait la sphère de diffusion de 4,5 m
-  addSubject({ label: 'Un lampadaire dans la tempête', value: 0.65, glows: true, box: boxAt(x + lantX / 2, z, Math.abs(lantX) / 2 + 0.45, 0.45, SIDEWALK_H, SIDEWALK_H + 7.4) });
-  lampPositions.push({ pos: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z), col: new THREE.Color(0xffcc94).multiplyScalar(0.56) });   // les flocons suivent la baisse des lampes
-  addCollider(x, z, 0.38, 0.38);
-  addContactShadow(x, z, 1.05, 1.05, 0.5);
+  addSubject({ label: 'Un lampadaire dans la tempête', value: 0.65, glows: true, box: st.box(boxAt(x + lantX / 2, z, Math.abs(lantX) / 2 + 0.45, 0.45, SIDEWALK_H, SIDEWALK_H + 7.4)) });
+  lampPositions.push({ pos: st.toWorld(new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z)), col: new THREE.Color(0xffcc94).multiplyScalar(0.56) });   // les flocons suivent la baisse des lampes
+  st.collider(x, z, 0.38, 0.38);
+  addContactShadowIn(st, x, z, 1.05, 1.05, 0.5);
   // neige au pied
-  buildDrift(x, SIDEWALK_H, z, 0.7, 0.7);
+  buildDrift(st, x, SIDEWALK_H, z, 0.7, 0.7);
 }
 
-function buildTrashCan(x, z, rot) {
+function buildTrashCan(st, x, z, rot) {
   const g = new THREE.Group();
   const body = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.37, 0.33, 0.98, 20), MAT.trash)); body.position.y = 0.49; g.add(body);
   // cannelures verticales
@@ -243,12 +243,12 @@ function buildTrashCan(x, z, rot) {
   const snow = new THREE.Mesh(sg, MAT.snow); snow.scale.set(1, 0.75 + Math.random() * 0.4, 1); snow.position.y = 0.95; g.add(snow);
   // coulée de neige sur le côté
   const drip = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), MAT.snow); drip.scale.set(0.7, 1.6, 0.5); drip.position.set(0.3, 0.85, 0.15); g.add(drip);
-  g.position.set(x, SIDEWALK_H, z); g.rotation.y = rot; scene.add(g);
-  addCollider(x, z, 0.42, 0.42);
-  addContactShadow(x, z, 0.62, 0.62, 0.55);
+  g.position.set(x, SIDEWALK_H, z); g.rotation.y = rot; st.add(g);
+  st.collider(x, z, 0.42, 0.42);
+  addContactShadowIn(st, x, z, 0.62, 0.62, 0.55);
 }
 
-function buildHydrant(x, z) {
+function buildHydrant(st, x, z) {
   const g = new THREE.Group();
   const body = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 0.72, 12), MAT.hydrant)); body.position.y = 0.36; g.add(body);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 8, 16), MAT.hydrant); ring.rotation.x = Math.PI / 2; ring.position.y = 0.7; g.add(ring);
@@ -259,14 +259,14 @@ function buildHydrant(x, z) {
     const nc = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.08, 6), MAT.iron); nc.rotation.z = Math.PI / 2; nc.position.set(s * 0.37, 0.52, 0); g.add(nc);
   }
   const snow = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snow); snow.scale.set(1, 0.55, 1); snow.position.y = 0.86; g.add(snow);
-  g.position.set(x, SIDEWALK_H, z); g.rotation.y = Math.PI / 2; scene.add(g);
-  addSubject({ label: "Une bouche d'incendie", value: 0.55, box: boxAt(x, z, 0.42, 0.42, SIDEWALK_H, SIDEWALK_H + 1.05) });
-  addCollider(x, z, 0.3, 0.3);
-  addContactShadow(x, z, 0.5, 0.5, 0.5);
-  buildDrift(x, SIDEWALK_H, z, 0.55, 0.55);
+  g.position.set(x, SIDEWALK_H, z); g.rotation.y = Math.PI / 2; st.add(g);
+  addSubject({ label: "Une bouche d'incendie", value: 0.55, box: st.box(boxAt(x, z, 0.42, 0.42, SIDEWALK_H, SIDEWALK_H + 1.05)) });
+  st.collider(x, z, 0.3, 0.3);
+  addContactShadowIn(st, x, z, 0.5, 0.5, 0.5);
+  buildDrift(st, x, SIDEWALK_H, z, 0.55, 0.55);
 }
 
-function buildDrift(x, y, z, sx, sz) {
+function buildDrift(st, x, y, z, sx, sz, sy = rnd(0.28, 0.55)) {
   // congère bosselée (une demi-sphère lisse faisait oreiller), profil qui s'étale au pied
   const g = new THREE.SphereGeometry(1, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), p = g.attributes.position, seed = Math.random() * 50;
   for (let i = 0; i < p.count; i++) {
@@ -275,43 +275,72 @@ function buildDrift(x, y, z, sx, sz) {
   }
   g.computeVertexNormals();
   const d = new THREE.Mesh(g, MAT.snow);
-  d.scale.set(sx, rnd(0.28, 0.55), sz); d.position.set(x, y, z); d.receiveShadow = true; scene.add(d);
+  d.scale.set(sx, sy, sz); d.position.set(x, y, z); d.receiveShadow = true; st.add(d);
 }
 
-// Placement
-let lampIndex = 0;
-for (let z = LAMP_Z0; z < STREET_Z_MAX; z += LAMP_PITCH) {   // grille connue aussi du rebond sur les façades (weathering.js)
-  buildLamppost(-(ROAD_HALF + 0.55), z, -1);
-  buildLamppost( (ROAD_HALF + 0.55), z + LAMP_PITCH / 2, 1);
-  lampIndex++;
-}
-for (let z = STREET_Z_MIN + 3; z < STREET_Z_MAX; z += rnd(8, 15)) {
-  const side = Math.random() < 0.5 ? -1 : 1, n = 1 + Math.floor(Math.random() * 3);
-  for (let k = 0; k < n; k++) {
-    const zk = z + k * 0.85;
-    if (doorGap(side, zk) < 0.45) continue;                    // jamais dans les marches d'un perron ni devant une porte
-    buildTrashCan(side * (FACADE_X - 0.6 - (k % 2) * 0.1), zk, Math.random() * 6);
-  }
-}
-for (let z = STREET_Z_MIN + 12; z < STREET_Z_MAX; z += 26) { buildHydrant(-(ROAD_HALF + 0.75), z); buildHydrant((ROAD_HALF + 0.75), z + 13); }
-for (let z = STREET_Z_MIN; z < STREET_Z_MAX; z += rnd(2.5, 6)) {
+// Placement, rue par rue (repère de la rue). `sides` : pour chaque côté, l'étendue le long de la
+// rue où poser lampadaires, poubelles, bouches d'incendie et congères de façade.
+/** Lampadaires de la grille LAMP_Z0 / LAMP_PITCH (côté +1 décalé d'un demi-pas) : c'est aussi elle
+ *  que le rebond sur les façades suppose (weathering.js), dans le repère de chaque rue. */
+function furnishStreet(st, sides) {
   for (const s of [-1, 1]) {
-    // congère raccourcie pour s'arrêter avant un perron ou une porte (elle s'étale sur ~1,25 × sz)
-    const gap = doorGap(s, z), sz = Math.min(rnd(1.5, 3.8), gap / 1.3);
-    if (sz > 0.6) buildDrift(s * (FACADE_X - 0.25), SIDEWALK_H + 0.12, z, rnd(0.8, 1.8), sz);
+    const S = sides[s < 0 ? 0 : 1], [l0, l1] = S.lamps;
+    const first = LAMP_Z0 + (s > 0 ? LAMP_PITCH / 2 : 0);
+    for (let z = first + LAMP_PITCH * Math.ceil((l0 - first) / LAMP_PITCH); z < l1; z += LAMP_PITCH) buildLamppost(st, s * (ROAD_HALF + 0.55), z, s);
+  }
+  for (const s of [-1, 1]) {
+    const S = sides[s < 0 ? 0 : 1], [w0, w1] = S.wall;
+    for (let z = w0 + 3; z < w1; z += rnd(8, 15)) {
+      if (Math.random() < 0.5) continue;                           // un côté sur deux en moyenne, comme avant
+      const n = 1 + Math.floor(Math.random() * 3);
+      for (let k = 0; k < n; k++) {
+        const zk = z + k * 0.85;
+        if (zk > w1 - 0.5 || doorGap(st, s, zk) < 0.45) continue;  // jamais dans les marches d'un perron ni devant une porte
+        buildTrashCan(st, s * (FACADE_X - 0.6 - (k % 2) * 0.1), zk, Math.random() * 6);
+      }
+    }
+    for (const z of S.hydrants) buildHydrant(st, s * (ROAD_HALF + 0.75), z);
+    for (let z = w0; z < w1; z += rnd(2.5, 6)) {
+      // congère raccourcie pour s'arrêter avant un perron ou une porte (elle s'étale sur ~1,25 × sz)
+      const gap = Math.min(doorGap(st, s, z), (w1 - z) * 2, (z - w0) * 2), sz = Math.min(rnd(1.5, 3.8), gap / 1.3);
+      if (sz > 0.6) buildDrift(st, s * (FACADE_X - 0.25), SIDEWALK_H + 0.12, z, rnd(0.8, 1.8), sz);
+    }
   }
 }
-// Panneau de stationnement + parcmètre
+const hydrantsEvery = (z0, z1, offset) => { const out = []; for (let z = z0 + offset; z < z1; z += 26) out.push(z); return out; };
+
+// Rue principale : à gauche, le mobilier s'arrête au coin (pas de façade au-delà) ; à droite il
+// longe la rangée jusqu'au trottoir d'en face de la transversale.
+furnishStreet(MAIN, [
+  { lamps: [STREET_Z_MIN, STREET_Z_MAX], wall: [CROSS_Z + FACADE_X, STREET_Z_MAX], hydrants: hydrantsEvery(STREET_Z_MIN, STREET_Z_MAX, 12) },
+  { lamps: [STREET_Z_MIN, STREET_Z_MAX + LAMP_PITCH / 2], wall: [CROSS_Z - FACADE_X + 0.5, STREET_Z_MAX], hydrants: hydrantsEvery(STREET_Z_MIN, STREET_Z_MAX, 25) },
+]);
+// Rue de gauche : rien dans le carrefour ; côté feux jusqu'à l'angle de l'immeuble du coin, en
+// face jusqu'au fond du T.
+furnishStreet(LEFT, [
+  { lamps: [LEFT_END_X + 3, -FACADE_X - 2], wall: [LEFT_END_X + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(LEFT_END_X, -FACADE_X - 4, 12) },
+  { lamps: [LEFT_END_X + 3, ROAD_HALF - 2], wall: [LEFT_END_X + 0.5, FACADE_X - 0.5], hydrants: hydrantsEvery(LEFT_END_X, ROAD_HALF - 4, 25) },
+]);
+// Fond de l'impasse : la neige que les chasse-neige ont poussée contre les façades, une
+// longue congère d'un trottoir à l'autre (la chaussée arrive au pied des immeubles).
+for (let lx = -FACADE_X + 0.6; lx < FACADE_X - 0.4; lx += rnd(1.3, 2.1)) {
+  if (doorGap(LEFT_END, -1, LEFT.wz(lx, 0)) < 0.5) continue;      // devant les portes : passage dégagé à la pelle
+  const onRoad = Math.abs(lx) < ROAD_HALF;
+  buildDrift(LEFT, lx, onRoad ? 0.08 : SIDEWALK_H + 0.1, LEFT_END_X + 0.9, rnd(1.0, 1.7), rnd(1.1, 1.6), onRoad ? rnd(0.65, 1.1) : rnd(0.4, 0.7));
+}
+LEFT.collider(0, LEFT_END_X + 0.9, FACADE_X, 1.1);
+
+// Panneau de stationnement + parcmètre (rue principale, à droite du départ)
 {
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 2.8, 8), MAT.metal); pole.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 1.4, -2); scene.add(pole);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 2.8, 8), MAT.metal); pole.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 1.4, -2); MAIN.add(pole);
   const sign = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.95, 0.5), new THREE.MeshStandardMaterial({ color: 0xd4dae2, roughness: 0.5 })));
-  sign.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 2.35, -2); scene.add(sign);
-  const red = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3), new THREE.MeshBasicMaterial({ color: 0xc02020 })); red.position.set(ROAD_HALF + 0.57, SIDEWALK_H + 2.5, -2); red.rotation.y = -Math.PI / 2; scene.add(red);
-  addCollider(ROAD_HALF + 0.6, -2, 0.12, 0.12);
-  addContactShadow(ROAD_HALF + 0.6, -2, 0.3, 0.3, 0.45);
-  const meter = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.4, 0.14), MAT.iron)); meter.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 1.25, 7.5); scene.add(meter);
-  const mp = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.05, 8), MAT.metal); mp.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 0.52, 7.5); scene.add(mp);
-  const ms = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.14), MAT.snow); ms.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 1.49, 7.5); scene.add(ms);
-  addCollider(ROAD_HALF + 0.6, 7.5, 0.15, 0.15);
-  addContactShadow(ROAD_HALF + 0.6, 7.5, 0.3, 0.3, 0.45);
+  sign.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 2.35, -2); MAIN.add(sign);
+  const red = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3), new THREE.MeshBasicMaterial({ color: 0xc02020 })); red.position.set(ROAD_HALF + 0.57, SIDEWALK_H + 2.5, -2); red.rotation.y = -Math.PI / 2; MAIN.add(red);
+  MAIN.collider(ROAD_HALF + 0.6, -2, 0.12, 0.12);
+  addContactShadowIn(MAIN, ROAD_HALF + 0.6, -2, 0.3, 0.3, 0.45);
+  const meter = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.4, 0.14), MAT.iron)); meter.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 1.25, 7.5); MAIN.add(meter);
+  const mp = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.05, 8), MAT.metal); mp.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 0.52, 7.5); MAIN.add(mp);
+  const ms = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.14), MAT.snow); ms.position.set(ROAD_HALF + 0.6, SIDEWALK_H + 1.49, 7.5); MAIN.add(ms);
+  MAIN.collider(ROAD_HALF + 0.6, 7.5, 0.15, 0.15);
+  addContactShadowIn(MAIN, ROAD_HALF + 0.6, 7.5, 0.3, 0.3, 0.45);
 }

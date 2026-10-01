@@ -47,9 +47,9 @@ function warmupList(scene) {
   });
   return [...reps.values()];
 }
-/** Premier dessin de chaque représentant, seul, dans une petite cible au format de celle du
- *  post-traitement (RGBA demi-flottant) ; toutes les lumières restent en place, sinon les
- *  shaders préparés ne seraient pas ceux du jeu. Budget ~20 ms par image. */
+/** Premier dessin de chaque représentant, par petits groupes, dans une petite cible au format
+ *  de celle du post-traitement (RGBA demi-flottant) ; toutes les lumières restent en place, sinon
+ *  les shaders préparés ne seraient pas ceux du jeu. Budget ~20 ms par image. */
 async function warmupDraws(renderer, scene, camera, onProgress) {
   const all = [];
   scene.traverse(o => { if ((o.isMesh || o.isPoints || o.isSprite || o.isLine) && o.visible) all.push(o); });
@@ -59,16 +59,22 @@ async function warmupDraws(renderer, scene, camera, onProgress) {
   renderer.shadowMap.needsUpdate = false;                   // les ombres seront calculées à la vraie première image
   for (const o of all) o.visible = false;
   renderer.setRenderTarget(rt);
-  let longest = 0;
+  let longest = 0, k = 1, passes = 0;
   try {
     for (let i = 0; i < reps.length;) {
       const tf = performance.now();
       while (i < reps.length && performance.now() - tf < 20) {
-        const o = reps[i++], culled = o.frustumCulled, td = performance.now();
-        o.visible = true; o.frustumCulled = false;
-        renderer.render(scene, camera);
-        o.visible = false; o.frustumCulled = culled;
-        longest = Math.max(longest, performance.now() - td);
+        // k représentants par dessin : on double tant que le dessin est rapide (shaders déjà
+        // prêts, 2e visite : quelques dessins au lieu de ~500), on revient à 1 s'il est lent
+        // (vraie première visite : chacun le sien, pour ne jamais bloquer la page longtemps)
+        const batch = reps.slice(i, i + k), culled = batch.map(o => o.frustumCulled), td = performance.now();
+        i += batch.length;
+        for (const o of batch) { o.visible = true; o.frustumCulled = false; }
+        renderer.render(scene, camera); passes++;
+        batch.forEach((o, j) => { o.visible = false; o.frustumCulled = culled[j]; });
+        const dt = performance.now() - td;
+        longest = Math.max(longest, dt);
+        k = dt < 6 ? Math.min(64, k * 2) : dt > 25 ? Math.max(1, k >> 1) : k;
       }
       onProgress(i / reps.length);
       renderer.setRenderTarget(prevTarget); await nextFrame(); renderer.setRenderTarget(rt);
@@ -79,7 +85,7 @@ async function warmupDraws(renderer, scene, camera, onProgress) {
     renderer.shadowMap.needsUpdate = prevShadow;
     rt.dispose();
   }
-  return { draws: reps.length, longest: Math.round(longest) };
+  return { draws: reps.length, passes, longest: Math.round(longest) };
 }
 
 /** Toutes les textures utilisées par les matériaux de la scène (propriétés et uniformes). */

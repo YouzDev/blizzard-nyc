@@ -4,6 +4,7 @@ import { ROAD_HALF, SIDEWALK_W, SIDEWALK_H, EYE_HEIGHT, WALK_SPEED, PLAYER_RADIU
 import { renderer } from '../core/renderer.js';
 import { camera } from '../core/scene.js';
 import { collides, pushOut } from '../world/collisions.js';
+import { curbDistance } from '../world/ground.js';
 
 /* =====================================================================
    13. CONTRÔLES FPS : PointerLock (avec repli), ZQSD/WASD, head-bobbing, collisions
@@ -82,9 +83,11 @@ controls.addEventListener('unlock', releaseAll);
 
 const velocity = new THREE.Vector3(), fwdDir = new THREE.Vector3(), rightDir = new THREE.Vector3(), moveDir = new THREE.Vector3(), target = new THREE.Vector3();
 let bobPhase = 0, walkAmount = 0, lastSway = 0;
-export function groundHeightAt(x) {
-  const ax = Math.abs(x), k = THREE.MathUtils.smoothstep(ax, ROAD_HALF - 0.3, ROAD_HALF + 0.2);
-  const wall = THREE.MathUtils.clamp((ax - ROAD_HALF) / SIDEWALK_W, 0, 1);
+export function groundHeightAt(x, z) {
+  // d : distance au bord de chaussée côté trottoir (rue principale : |x| − ROAD_HALF ; rue de
+  // gauche et coins du carrefour : voir ground.js)
+  const d = curbDistance(x, z), k = THREE.MathUtils.smoothstep(d, -0.3, 0.2);
+  const wall = THREE.MathUtils.clamp(d / SIDEWALK_W, 0, 1);
   // suit (en lissé) la neige de ground.js : ~10 cm sur la chaussée, congère qui monte vers les murs
   return SIDEWALK_H * k + (0.1 + Math.pow(wall, 2.4) * 0.3) * k + 0.1 * (1 - k) + 0.03;
 }
@@ -118,7 +121,7 @@ export function updatePlayer(dt) {
   const sway = Math.sin(bobPhase) * 0.025 * walkAmount;
   p.x += rightDir.x * (sway - lastSway); p.z += rightDir.z * (sway - lastSway); lastSway = sway;
   pushOut(p, PLAYER_RADIUS);                              // le balancement ne peut pas nous mettre dans un obstacle
-  p.y = groundHeightAt(p.x) + EYE_HEIGHT + bobY;
+  p.y = groundHeightAt(p.x, p.z) + EYE_HEIGHT + bobY;
   return speed;
 }
 

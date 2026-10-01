@@ -20,7 +20,7 @@ export const snowBounce = {
 import { usePhoto, loadPhotoSet, photoMean } from '../textures/photo.js';
 
 /* =====================================================================
-   6 quater. VIEILLISSEMENT DES FAÇADES (dans le shader, en coordonnées monde)
+   6 quater. VIEILLISSEMENT DES FAÇADES (dans le shader, dans le repère de la rue)
    Une façade new-yorkaise n'est jamais propre et jamais uniforme : la suie noircit
    le haut sous la corniche, la pluie qui ruisselle des appuis de fenêtre dessine
    des coulures sombres sous chacun d'eux, les briques changent de ton par plaques.
@@ -33,7 +33,12 @@ import { usePhoto, loadPhotoSet, photoMean } from '../textures/photo.js';
 /** Greffe le vieillissement sur un MeshStandardMaterial. `p` (tout optionnel) :
  *  top (hauteur du haut de mur, suie sous la corniche), et pour les coulures sous
  *  appuis : z0, pitch, cols (grille des colonnes le long de Z), y0 (premier appui),
- *  floorH, rows, winW. `strength` règle l'ensemble (1 = brique). */
+ *  floorH, rows, winW. `strength` règle l'ensemble (1 = brique).
+ *  `frame` : repère de la rue (Street.frame : cos, sin, x0, z0) — tout le calcul se fait dans
+ *  ce repère (façades à x = ±FACADE_X, grille des lampadaires le long de z), donc il vaut
+ *  aussi pour une rue tournée ; par défaut celui du monde (rue principale).
+ *  `warm` : part du rebond chaud des lampadaires (0 sur une façade sans lampadaires devant :
+ *  la grille analytique en inventerait). Uniformes, pas texte du shader : un seul programme. */
 export function weather(mat, p = {}) {
   const u = {
     uGrime: { value: grimeTex },
@@ -43,19 +48,26 @@ export function weather(mat, p = {}) {
     uY0: { value: p.y0 ?? 0 }, uFloorH: { value: p.floorH ?? 1 }, uRows: { value: p.rows ?? 0 }, uWinW: { value: p.winW ?? 1 },
     uStrength: { value: p.strength ?? 1 },
     uEscZ: { value: p.escZ ?? 0 }, uEscW: { value: p.escW ?? 0 }, uEscY0: { value: p.escY0 ?? 0 }, uEscN: { value: p.escN ?? 0 },
+    uFrame: { value: p.frame ?? new THREE.Vector4(1, 0, 0, 0) }, uWarm: { value: p.warm ?? 1 },
   };
   mat.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, u, snowBounce);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm; uniform vec4 uFrame;')
+      // vWPos / vWNrm : position et normale dans le REPÈRE DE LA RUE (le monde, pour la rue principale)
       .replace('#include <project_vertex>', `#include <project_vertex>
-        vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-        vWNrm = normalize(mat3(modelMatrix) * objectNormal);`);
+        {
+          vec4 wpF = modelMatrix * vec4(transformed, 1.0);
+          vec2 dF = wpF.xz - uFrame.zw;
+          vWPos = vec3(uFrame.x * dF.x - uFrame.y * dF.y, wpF.y, uFrame.y * dF.x + uFrame.x * dF.y);
+          vec3 nF = normalize(mat3(modelMatrix) * objectNormal);
+          vWNrm = vec3(uFrame.x * nF.x - uFrame.y * nF.z, nF.y, uFrame.y * nF.x + uFrame.x * nF.z);
+        }`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vWPos; varying vec3 vWNrm;
         uniform sampler2D uGrime;
-        uniform float uTop, uWin, uZ0, uPitch, uCols, uY0, uFloorH, uRows, uWinW, uStrength, uEscZ, uEscW, uEscY0, uEscN;
+        uniform float uTop, uWin, uZ0, uPitch, uCols, uY0, uFloorH, uRows, uWinW, uStrength, uEscZ, uEscW, uEscY0, uEscN, uWarm;
         uniform vec3 uBounceWarm, uBounceCool;`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         {
@@ -70,7 +82,7 @@ export function weather(mat, p = {}) {
           float nearB = 1.0 - smoothstep(1.5, 4.0, abs(abs(vWPos.x) - ${FACADE_X.toFixed(2)}));
           float warmB = exp(-dzB * dzB / 24.0) / (1.0 + yB * yB / 14.0);
           float coolB = exp(-yB / 9.0);
-          reflectedLight.indirectDiffuse += diffuseColor.rgb * faceB * nearB * (uBounceWarm * warmB + uBounceCool * coolB);
+          reflectedLight.indirectDiffuse += diffuseColor.rgb * faceB * nearB * (uBounceWarm * warmB * uWarm + uBounceCool * coolB);
         }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         {

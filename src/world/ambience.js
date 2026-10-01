@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { STREET_Z_MIN } from '../core/constants.js';
+import { STREET_Z_MIN, CROSS_Z, LEFT_END_X } from '../core/constants.js';
 import { rnd } from '../core/noise.js';
 import { scene, skyMat } from '../core/scene.js';
 
@@ -38,16 +38,21 @@ const cityGlow = new THREE.PointLight(0x7488bd, 90, 120, 2); cityGlow.position.s
       }`,
   });
   const winGeo = new THREE.PlaneGeometry(1.1, 1.6);
-  const wins = [];
-  for (let i = 0; i < 13; i++) {
-    // plus hautes qu'avant (45–95 m), et un tiers d'entre elles dans l'axe de la rue, là où on les voit
-    const w = rnd(14, 26), h = rnd(70, 140), x = i % 3 === 0 ? rnd(-22, 22) : rnd(-80, 80), z = STREET_Z_MIN - rnd(35, 85);
+  const wins = [], qX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), one = new THREE.Vector3(1, 1, 1);
+  /** Tour de côté w, hauteur h ; fenêtres sur la face tournée vers la rue (+z, ou +x pour la rue de gauche). */
+  const tower = (x, z, w, h, faceX) => {
     const t = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), towerMat); t.position.set(x, h / 2, z); scene.add(t);
     const cols = Math.floor(w / 3), rows = Math.floor(h / 3.5);
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (Math.random() < 0.35) {
-      const m = new THREE.Matrix4().makeTranslation(x - w / 2 + (c + 0.5) * (w / cols), (r + 0.5) * (h / rows), z + w / 2 + 0.05); wins.push(m);
+      const a = -w / 2 + (c + 0.5) * (w / cols), y = (r + 0.5) * (h / rows);
+      wins.push(faceX ? new THREE.Matrix4().compose(new THREE.Vector3(x + w / 2 + 0.05, y, z + a), qX, one) : new THREE.Matrix4().makeTranslation(x + a, y, z + w / 2 + 0.05));
     }
-  }
+  };
+  // plus hautes qu'avant (45–95 m), et un tiers d'entre elles dans l'axe de la rue, là où on les voit ;
+  // reculées derrière la rangée d'immeubles qui ferme le carrefour (elle s'arrête à ~121 m)
+  for (let i = 0; i < 13; i++) tower(i % 3 === 0 ? rnd(-22, 22) : rnd(-80, 80), STREET_Z_MIN - rnd(58, 100), rnd(14, 26), rnd(70, 140), false);
+  // au-delà du fond de la rue de gauche : leurs silhouettes dépassent des immeubles de l'impasse
+  for (let i = 0; i < 5; i++) tower(LEFT_END_X - rnd(60, 110), CROSS_Z + (i % 2 ? rnd(-15, 15) : rnd(-55, 55)), rnd(14, 26), rnd(70, 140), true);
   const inst = new THREE.InstancedMesh(winGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(0.22, 0.2, 0.17), fog: false }), wins.length);
   wins.forEach((m, i) => inst.setMatrixAt(i, m)); scene.add(inst);
 }

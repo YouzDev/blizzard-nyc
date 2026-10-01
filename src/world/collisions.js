@@ -1,4 +1,4 @@
-import { FACADE_X, STREET_Z_MIN, STREET_Z_MAX } from '../core/constants.js';
+import { FACADE_X, STREET_Z_MAX, CROSS_Z, LEFT_END_X } from '../core/constants.js';
 
 /* =====================================================================
    4. COLLISIONS (AABB au sol)
@@ -38,10 +38,17 @@ export function pushOut(p, r) {
     if (!moved) return;
   }
 }
-addCollider(-FACADE_X - 10, 0, 10, 200);
-addCollider( FACADE_X + 10, 0, 10, 200);
-addCollider(0, STREET_Z_MIN - 2, 40, 2);
-addCollider(0, STREET_Z_MAX + 2, 40, 2);
+// Murs : les façades (plans x = ±FACADE_X de la rue principale, z = CROSS_Z ± FACADE_X de la
+// transversale) et le fond de l'impasse de gauche ; derrière le départ, une limite à z = STREET_Z_MAX + 2.
+{
+  const near = CROSS_Z + FACADE_X, far = CROSS_Z - FACADE_X, x0 = LEFT_END_X - 20;
+  addCollider(-FACADE_X - 10, (near + 200) / 2, 10, (200 - near) / 2);          // gauche de la rue principale, jusqu'au coin
+  addCollider( FACADE_X + 10, 0, 10, 200);                                      // droite de la rue principale
+  addCollider(0, STREET_Z_MAX + 2, 40, 2);                                      // derrière le départ
+  addCollider((x0 - FACADE_X) / 2, near + 10, (-FACADE_X - x0) / 2, 10);        // rue de gauche, côté feux
+  addCollider((x0 + FACADE_X + 20) / 2, far - 10, (FACADE_X + 20 - x0) / 2, 10);  // façades d'en face (rue de gauche et fond du T)
+  addCollider(LEFT_END_X - 10, CROSS_Z, 10, FACADE_X + 10);                     // fond de l'impasse
+}
 
 export const shadowCasters = [];
 export function shadowed(mesh, cast = true, receive = true) { mesh.castShadow = cast; mesh.receiveShadow = receive; return mesh; }
