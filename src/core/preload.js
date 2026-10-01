@@ -59,25 +59,42 @@ async function warmupDraws(renderer, scene, camera, onProgress) {
   renderer.shadowMap.needsUpdate = false;                   // les ombres seront calculées à la vraie première image
   for (const o of all) o.visible = false;
   renderer.setRenderTarget(rt);
-  let longest = 0, k = 1, passes = 0;
+  // Ce qui coûte au premier dessin, c'est chaque PROGRAMME (avec sa disposition d'attributs) :
+  // le premier représentant de chaque programme est dessiné SEUL ; tous les autres (même shader,
+  // autres textures ou uniformes) passent ensuite par groupes, k par dessin, k doublant tant
+  // que c'est rapide (2e visite : ~500 représentants en quelques dizaines de dessins). Grouper
+  // aussi les premiers pouvait réunir dans un même dessin plusieurs shaders jamais vus — visite
+  // après une mise à jour, cache en partie seulement — et figer la page plusieurs secondes.
+  // Un matériau servant à plusieurs programmes (instancié et non instancié) : chacun son dessin.
+  const progKey = o => (Array.isArray(o.material) ? o.material : [o.material]).map(m => {
+    const p = renderer.properties.get(m);
+    return p.programs?.size === 1 ? p.currentProgram.id : `${m.uuid}${o.isInstancedMesh ? 'i' : ''}`;
+  }).join('|') + '/' + Object.keys(o.geometry?.attributes ?? {}).sort().join(',') + (o.isInstancedMesh ? '/inst' : '');
+  const firsts = [], rest = [], seen = new Set();
+  for (const o of reps) { const key = progKey(o); if (seen.has(key)) rest.push(o); else { seen.add(key); firsts.push(o); } }
+  let longest = 0, k = 1, passes = 0, done = 0;
+  const drawBatch = batch => {
+    const culled = batch.map(o => o.frustumCulled), td = performance.now();
+    for (const o of batch) { o.visible = true; o.frustumCulled = false; }
+    renderer.render(scene, camera); passes++;
+    batch.forEach((o, j) => { o.visible = false; o.frustumCulled = culled[j]; });
+    const dt = performance.now() - td;
+    longest = Math.max(longest, dt);
+    return dt;
+  };
   try {
-    for (let i = 0; i < reps.length;) {
-      const tf = performance.now();
-      while (i < reps.length && performance.now() - tf < 20) {
-        // k représentants par dessin : on double tant que le dessin est rapide (shaders déjà
-        // prêts, 2e visite : quelques dessins au lieu de ~500), on revient à 1 s'il est lent
-        // (vraie première visite : chacun le sien, pour ne jamais bloquer la page longtemps)
-        const batch = reps.slice(i, i + k), culled = batch.map(o => o.frustumCulled), td = performance.now();
-        i += batch.length;
-        for (const o of batch) { o.visible = true; o.frustumCulled = false; }
-        renderer.render(scene, camera); passes++;
-        batch.forEach((o, j) => { o.visible = false; o.frustumCulled = culled[j]; });
-        const dt = performance.now() - td;
-        longest = Math.max(longest, dt);
-        k = dt < 6 ? Math.min(64, k * 2) : dt > 25 ? Math.max(1, k >> 1) : k;
+    for (const [list, grouped] of [[firsts, false], [rest, true]]) {
+      for (let i = 0; i < list.length;) {
+        const tf = performance.now();
+        while (i < list.length && performance.now() - tf < 20) {
+          const batch = list.slice(i, i + (grouped ? k : 1));
+          i += batch.length; done += batch.length;
+          const dt = drawBatch(batch);
+          if (grouped) k = dt < 6 ? Math.min(64, k * 2) : dt > 25 ? Math.max(1, k >> 1) : k;
+        }
+        onProgress(done / reps.length);
+        renderer.setRenderTarget(prevTarget); await nextFrame(); renderer.setRenderTarget(rt);
       }
-      onProgress(i / reps.length);
-      renderer.setRenderTarget(prevTarget); await nextFrame(); renderer.setRenderTarget(rt);
     }
   } finally {
     for (const o of all) o.visible = true;
@@ -85,7 +102,7 @@ async function warmupDraws(renderer, scene, camera, onProgress) {
     renderer.shadowMap.needsUpdate = prevShadow;
     rt.dispose();
   }
-  return { draws: reps.length, passes, longest: Math.round(longest) };
+  return { draws: reps.length, programs: firsts.length, passes, longest: Math.round(longest) };
 }
 
 /** Toutes les textures utilisées par les matériaux de la scène (propriétés et uniformes). */
