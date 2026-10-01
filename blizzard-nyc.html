@@ -194,6 +194,11 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
    0 … NUM_*_SHADOWS − 1, la boucle prend la suite.
    Non géré : les projecteurs à texture (SpotLight.map) — le shader refuserait de
    compiler avec un message clair (#error) si on en ajoutait un.
+   INTENSITÉ D'OMBRE des projecteurs : `light.shadow.radius` (0 → pas d'ombre, 1 → ombre
+   pleine). Avec les ombres PCFSoft, Three r160 ne se sert pas de ce rayon (vérifié dans
+   getShadow) : on le réutilise pour faire apparaître / disparaître en fondu l'ombre d'un
+   lampadaire quand world/lightPool.js la confie à un autre. ⚠ Garder radius dans [0, 1] sur
+   tout projecteur à ombre (le néon : 1) ; en PCF simple ou VSM il redeviendrait un rayon.
 
    Mesures / tests (URL) : ?lightloop=0 remet le morceau d'origine ; ?lightcompare
    compile les deux versions (bascule par le define BLZ_LIGHTS_ORIGINAL) pour comparer
@@ -242,7 +247,7 @@ const SPOT_BLOCK = `#if ( NUM_SPOT_LIGHTS > 0 ) && defined( RE_Direct )
 		spotLight = spotLights[ i ];
 		getSpotLightInfo( spotLight, geometryPosition, directLight );
 		spotLightShadow = spotLightShadows[ i ];
-		directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ) : 1.0;
+		directLight.color *= ( directLight.visible && receiveShadow ) ? mix( 1.0, getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ), clamp( spotLightShadow.shadowRadius, 0.0, 1.0 ) ) : 1.0;
 		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 	}
 	#pragma unroll_loop_end
@@ -2258,6 +2263,29 @@ function boxAt(x, z, hx, hz, y0, y1) {
   return new THREE.Box3(new THREE.Vector3(x - hx, y0, z - hz), new THREE.Vector3(x + hx, y1, z + hz));
 }
 
+/* ───────────────────────── src/world/lightRegistry.js ───────────────────────── */
+/* =====================================================================
+   6 bis. REGISTRE DES SOURCES LUMINEUSES
+   Rempli par les lampadaires (section 7) et le néon (section 9), lu par le
+   shader des flocons (section 11) et par la boucle (section 14).
+   ===================================================================== */
+
+const flickerLights = [];
+const lampPositions = [];       // pour éclairer les flocons dans le shader
+
+/* Sources « virtuelles » : lampadaires, lanternes d'entrée, lumières de boutique. Elles ne
+   créent PAS de lumière Three : seules les plus proches du joueur reçoivent une des vraies
+   lumières, en nombre fixe, de world/lightPool.js. Le nombre de lumières reste donc le même
+   quelle que soit la taille de la ville (texte des shaders constant, cache du navigateur
+   valable, coût par pixel constant).
+   Champs : pos (Vector3, monde), color (Color), intensity (cd), distance (portée, m), decay,
+   flick (entrée de flickerLights dont on lit .k, ou null) ; projecteurs en plus : target
+   (Vector3, monde), angle, penumbra. */
+const pointSources = [];
+const spotSources = [];
+function addPointSource(s) { pointSources.push({ decay: 2, flick: null, ...s, slot: null }); }
+function addSpotSource(s) { spotSources.push({ decay: 2, flick: null, ...s, slot: null }); }
+
 /* ───────────────────────── src/world/buildings.js ───────────────────────── */
 /* =====================================================================
    6. BÂTIMENTS : soubassement en pierre, briques, fenêtres, climatiseurs,
@@ -2621,7 +2649,7 @@ function buildStorefront(side, zc, w, o) {
       const os = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.3), new THREE.MeshBasicMaterial({ map: openSignTex, color: new THREE.Color().setScalar(o.isDeli ? 1.8 : 1.1) }));
       os.position.set(fx(D - 0.07), 2.05, doorEnd < 0 ? seg[1] - 0.5 : seg[0] + 0.5); os.rotation.y = rotY; scene.add(os);
     }
-    const l = new THREE.PointLight(0xffc98a, 7, 9, 2); l.position.set(fx(1.1), 2.5, zc); scene.add(l);
+    addPointSource({ pos: new THREE.Vector3(fx(1.1), 2.5, zc), color: new THREE.Color(0xffc98a), intensity: 7, distance: 9 });
     // climatiseur planté dans l'imposte, une fois sur deux
     if (Math.random() < 0.5) {
       const ac = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), MAT.concrete)); ac.position.set(fx(0.3), yGlass + 0.28, dzm + (doorEnd < 0 ? 1.6 : -1.6)); scene.add(ac);
@@ -2649,7 +2677,7 @@ function buildStorefront(side, zc, w, o) {
       const cone = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.14, 12), MAT.metal); cone.position.set(fx(reach), ySign1 + 0.06, z); scene.add(cone);
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.0, 1.2) })); bulb.position.set(fx(reach), ySign1 - 0.02, z); scene.add(bulb);
     }
-    const sl = new THREE.PointLight(0xffe2b0, 4, 7, 2); sl.position.set(fx(D + 0.6), ySign1 - 0.2, zc); scene.add(sl);
+    addPointSource({ pos: new THREE.Vector3(fx(D + 0.6), ySign1 - 0.2, zc), color: new THREE.Color(0xffe2b0), intensity: 4, distance: 7 });
   }
 
   // --- Store à lambrequin sous l'enseigne, incliné vers la rue, neige dessus
@@ -2815,7 +2843,7 @@ function buildEntrance(side, z, yDoor) {
   bulb.position.set(X(0.28), ly + 0.05, lz); scene.add(bulb);
   // la lumière part d'entre la lanterne et la porte, un peu devant : posée à la lanterne, elle
   // arrivait en rasant sur les vantaux au fond de l'embrasure et la porte restait noire
-  const lamp = new THREE.PointLight(0xffc27a, 5, 6, 2); lamp.position.set(X(0.85), yDoor + DH - 0.1, z + 0.45); scene.add(lamp);
+  addPointSource({ pos: new THREE.Vector3(X(0.85), yDoor + DH - 0.1, z + 0.45), color: new THREE.Color(0xffc27a), intensity: 5, distance: 6 });
 }
 
 /** Perron de brownstone + clôture en fer forgé (comme la zone grillagée de l'image). */
@@ -3012,16 +3040,6 @@ if (basementGlass.length) scene.add(new THREE.Mesh(mergeGeometries(basementGlass
 // socle : même pierre, gardée gris granit par la couleur du matériau
 if (plinthGeoms.length) { const pm = weather(MAT.granite.clone(), { strength: 0.8 }); usePhoto(pm, 'concrete_wall_008', 5.5 / 2.7, 5.5 / 2.7); scene.add(shadowed(new THREE.Mesh(mergeGeometries(plinthGeoms), pm))); }
 
-/* ───────────────────────── src/world/lightRegistry.js ───────────────────────── */
-/* =====================================================================
-   6 bis. REGISTRE DES SOURCES LUMINEUSES
-   Rempli par les lampadaires (section 7) et le néon (section 9), lu par le
-   shader des flocons (section 11) et par la boucle (section 14).
-   ===================================================================== */
-
-const flickerLights = [];
-const lampPositions = [];       // pour éclairer les flocons dans le shader
-
 /* ───────────────────────── src/world/contactShadows.js ───────────────────────── */
 /* =====================================================================
    6 ter. OMBRES DE CONTACT
@@ -3202,7 +3220,7 @@ function placed(geo, x, y, z, rx = 0, ry = 0, rz = 0) {
   return g;
 }
 
-function buildLamppost(x, z, side, castShadow) {
+function buildLamppost(x, z, side) {
   const g = new THREE.Group(), metal = [], snow = [];
   // socle tourné (profil ornemental)
   const profile = [[0, 0], [0.36, 0], [0.36, 0.12], [0.3, 0.18], [0.3, 0.4], [0.22, 0.5], [0.2, 0.9], [0.24, 1.0], [0.16, 1.1], [0.1, 1.2]].map(p => new THREE.Vector2(p[0], p[1]));
@@ -3285,20 +3303,17 @@ function buildLamppost(x, z, side, castShadow) {
   const glow = new THREE.Mesh(new THREE.SphereGeometry(GLOW_R, 24, 16), glowMat);
   glow.position.set(lantX, LAMP_Y, 0); glow.frustumCulled = true; g.add(glow);
 
-  // Éclairage : spot chaud vers le trottoir (ombres) + point doux pour les façades
-  const spot = new THREE.SpotLight(0xffcc94, 82, 30, 1.1, 0.8, 2);
-  spot.position.set(lantX, LAMP_Y, 0);
-  spot.target.position.set(lantX * 1.4, 0, 0);
-  g.add(spot); g.add(spot.target);
-  if (castShadow) {
-    spot.castShadow = true; spot.shadow.mapSize.set(1024, 1024);
-    spot.shadow.camera.near = 0.45; spot.shadow.camera.far = 30; spot.shadow.bias = -0.0005; spot.shadow.radius = 4;
-  }
+  // Éclairage : spot chaud vers le trottoir + point doux pour les façades. Ce sont des
+  // SOURCES : les vraies lumières (et les ombres) vont aux lampadaires les plus proches du
+  // joueur, voir world/lightPool.js.
+  const flick = { lights: [], base: [], halos, uK, seed: Math.random() * 10 };
+  flickerLights.push(flick);
+  addSpotSource({ pos: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z), target: new THREE.Vector3(x + lantX * 1.4, SIDEWALK_H, z),
+    color: new THREE.Color(0xffcc94), intensity: 82, distance: 30, angle: 1.1, penumbra: 0.8, flick });
   // Remplissage : c'est lui qui décolle les façades du noir. Sur la référence, la
   // brique autour de chaque lampadaire est nettement lisible ; sans ce point, on
   // n'a qu'un mur noir et une flaque de lumière au sol.
-  const fill = new THREE.PointLight(0xffb266, 14, 24, 2); fill.position.set(lantX, LAMP_Y + 0.1, 0); g.add(fill);
-  flickerLights.push({ lights: [spot, fill], base: [82, 14], halos, uK, seed: Math.random() * 10 });
+  addPointSource({ pos: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y + 0.1, z), color: new THREE.Color(0xffb266), intensity: 14, distance: 24, flick });
 
   g.position.set(x, SIDEWALK_H, z); scene.add(g);
   // emprise explicite : la boîte du groupe engloberait la sphère de diffusion de 4,5 m
@@ -3364,8 +3379,8 @@ function buildDrift(x, y, z, sx, sz) {
 // Placement
 let lampIndex = 0;
 for (let z = LAMP_Z0; z < STREET_Z_MAX; z += LAMP_PITCH) {   // grille connue aussi du rebond sur les façades (weathering.js)
-  buildLamppost(-(ROAD_HALF + 0.55), z, -1, z > -30 && z < 25);
-  buildLamppost( (ROAD_HALF + 0.55), z + LAMP_PITCH / 2, 1, z + LAMP_PITCH / 2 > -30 && z + LAMP_PITCH / 2 < 25);
+  buildLamppost(-(ROAD_HALF + 0.55), z, -1);
+  buildLamppost( (ROAD_HALF + 0.55), z + LAMP_PITCH / 2, 1);
   lampIndex++;
 }
 for (let z = STREET_Z_MIN + 3; z < STREET_Z_MAX; z += rnd(8, 15)) {
@@ -4052,7 +4067,8 @@ let neonMat;
   const red = new THREE.SpotLight(0xff2e1c, 220, 13, 1.25, 0.9, 2);
   red.position.set(-FACADE_X + 1.4, sy - 0.4, neonZ);
   red.target.position.set(-FACADE_X + 3.5, 0, neonZ + 1.5); scene.add(red); scene.add(red.target);
-  red.castShadow = true; red.shadow.mapSize.set(1024, 1024); red.shadow.bias = -0.0005; red.shadow.radius = 4;
+  // radius = INTENSITÉ de l'ombre (1 = pleine) dans notre calcul des lumières, voir core/lightLoop.js
+  red.castShadow = true; red.shadow.mapSize.set(1024, 1024); red.shadow.bias = -0.0005; red.shadow.radius = 1;
   const redFill = new THREE.PointLight(0xff3a24, 26, 16, 2); redFill.position.set(-FACADE_X + 1.2, sy, neonZ); scene.add(redFill);
   const neonFlicker = { lights: [red, redFill], base: [220, 26], neon: true, seed: 0, k: 1 };
   flickerLights.push(neonFlicker);
@@ -4072,7 +4088,7 @@ let neonMat;
 // C'est cette lumière-là — pas les lampadaires — qui fait « lire » la neige comme
 // blanche ; les briques, elles, restent sombres (roughness élevée, albédo faible).
 scene.add(new THREE.HemisphereLight(0x4a5f84, 0x1c2431, 0.24));   // couleur « sol » relevée : aucune sous-face ne doit rendre noir pur
-const moon = new THREE.DirectionalLight(0x8ea6d4, 0.17);
+const moon = new THREE.DirectionalLight(0x8ea6d4, 0.17);   // sa carte d'ombre suit le joueur (world/lightPool.js)
 moon.position.set(-25, 45, -20); moon.castShadow = true;
 moon.shadow.mapSize.set(2048, 2048);
 moon.shadow.camera.left = -45; moon.shadow.camera.right = 45; moon.shadow.camera.top = 45; moon.shadow.camera.bottom = -45;
@@ -4196,6 +4212,215 @@ function updateTrafficLights(t) {
     }
     s.ped.material.color.setHex(state === 'red' ? 0xf4f4ff : 0xff7a1a);
   }
+}
+
+/* ───────────────────────── src/world/lightPool.js ───────────────────────── */
+/* =====================================================================
+   7 ter. LUMIÈRES EN NOMBRE FIXE QUI SUIVENT LE JOUEUR
+   Le nombre de lumières est écrit dans le texte de chaque shader et chaque pixel les
+   passe toutes en revue : une ville deux fois plus grande, c'était deux fois plus de
+   lumières, des shaders à recompiler (cache du navigateur perdu) et des images plus
+   lentes partout. Lampadaires, lanternes et boutiques ne créent donc plus de lumière :
+   ils déclarent une SOURCE (world/lightRegistry.js), et ce module tient un jeu FIXE de
+   vraies lumières — 46 points + 16 projecteurs dont 6 à ombre, plus le néon et la lueur
+   de la ville, fixes : exactement les nombres d'avant (48 points, 17 projecteurs, 7 ombres).
+   Il les confie aux sources les plus proches du joueur :
+     - points et projecteurs : les plus proches (points : distance au bord de leur portée,
+       une lanterne de 6 m compte moins loin qu'un lampadaire de 24 m) ;
+     - ombres : les 6 lampadaires les plus proches d'un point 10 m DEVANT le joueur — là
+       où il regarde. Au départ, c'est exactement le jeu d'avant (z entre −30 et 25).
+   Une source qui entre ou sort passe par un FONDU (0,6 s) ; une ombre qui change de
+   lampadaire s'efface (0,45 s) avant d'échanger les deux lampes, puis réapparaît sur
+   l'autre — le shader lit l'intensité d'ombre dans shadow.radius (voir core/lightLoop.js).
+   Une source déjà servie garde un avantage de 3 à 4 m : pas de va-et-vient à la limite.
+   Ombres : calculées une fois, puis seulement pour la lampe qui vient de changer de place
+   (shadow.autoUpdate = false sur chaque lumière, needsUpdate à la demande) ; la carte de
+   la lune suit le joueur de la même façon (recalée tous les ~15 m).
+   Inspection : window.__blizzard.lightPool (state, stats).
+   ===================================================================== */
+const SPOT_SLOTS = 16, SPOT_SHADOW_SLOTS = 6;
+const POOL_FADE_S = 0.6, POOL_SHADOW_FADE_S = 0.45;
+const POOL_HYST = 3, POOL_HYST_SHADOW = 4;
+const SHADOW_AHEAD = 10;
+const MOON_LEAD = 15, MOON_MOVE = 15, MOON_COOLDOWN = 1.5;
+const MOON_OFFSET = new THREE.Vector3(-25, 45, -5);   // position − cible de la lune (direction inchangée)
+
+const pointSlots = [], spotSlots = [], shadowSlots = [], plainSlots = [];
+const poolCam = new THREE.Vector3(), poolAhead = new THREE.Vector3(), poolFwd = new THREE.Vector3(0, 0, -1), poolLead = new THREE.Vector3();
+const lastAssignPos = new THREE.Vector3(1e9, 0, 0);
+const moonCenter = new THREE.Vector3(0, 0, -15);      // centre de départ : celui d'ambience.js
+let assignTimer = 0, moonCooldown = 0;
+
+const lightPool = {
+  stats: { shadowRenders: 0, moonMoves: 0, handovers: 0 },
+  get state() {
+    const at = sl => sl.src ? `${sl.src.pos.x.toFixed(1)},${sl.src.pos.z.toFixed(1)}` : '-';
+    return {
+      sources: { points: pointSources.length, spots: spotSources.length },
+      points: `${pointSlots.filter(s => s.src).length}/${pointSlots.length}`,
+      spots: `${spotSlots.filter(s => s.src).length}/${spotSlots.length}`,
+      shadows: shadowSlots.map(sl => `${at(sl)} ombre ${sl.shK.toFixed(2)}`),
+      moon: `${moonCenter.x.toFixed(1)},${moonCenter.z.toFixed(1)}`,
+    };
+  },
+};
+
+/** Lumière rangée hors service : noire, sans portée, loin sous le sol (écartée au premier test du shader). */
+function poolPark(l) {
+  l.intensity = 0; l.distance = 0.001; l.position.set(0, -1000, 0); l.updateMatrix(); l.updateMatrixWorld();
+  if (l.isSpotLight) { l.target.position.set(0, -1001, 0); l.target.updateMatrix(); l.target.updateMatrixWorld(); }
+}
+function poolBind(sl, s, fade) {
+  sl.src = s; s.slot = sl; sl.fade = fade; sl.target = 1;
+  const l = sl.light;
+  l.color.copy(s.color); l.distance = s.distance; l.decay = s.decay; l.position.copy(s.pos);
+  if (l.isSpotLight) { l.angle = s.angle; l.penumbra = s.penumbra; l.target.position.copy(s.target); l.target.updateMatrix(); l.target.updateMatrixWorld(); }
+  l.updateMatrix(); l.updateMatrixWorld();
+  l.intensity = s.intensity * (s.flick?.k ?? 1) * fade;
+}
+function poolUnbind(sl) {
+  if (sl.src && sl.src.slot === sl) sl.src.slot = null;
+  sl.src = null; sl.fade = 0; sl.target = 0; sl.handover = null;
+  poolPark(sl.light);
+}
+/** Déplace la source du projecteur P vers H (libre), avec son état de fondu. */
+function poolMove(P, H) {
+  const s = P.src, f = P.fade, t = P.target;
+  poolUnbind(P); poolBind(H, s, f); H.target = t;
+}
+/** Échange les sources de deux projecteurs (chacune garde son fondu). */
+function poolSwap(a, b) {
+  const sa = a.src, sb = b.src, fa = a.fade, fb = b.fade, ta = a.target, tb = b.target;
+  if (sb) poolBind(a, sb, fb); else poolUnbind(a);
+  a.target = tb;
+  if (sa) poolBind(b, sa, fa); else poolUnbind(b);
+  b.target = ta;
+}
+function poolShadowRender(sl) {
+  sl.light.shadow.needsUpdate = true; renderer.shadowMap.needsUpdate = true; lightPool.stats.shadowRenders++;
+}
+/** Les n meilleures sources selon key (plus petit = plus important). */
+function poolRank(list, n, key) {
+  for (const s of list) s._k = key(s);
+  return list.slice().sort((a, b) => a._k - b._k).slice(0, n);
+}
+
+function assignPoints(instant) {
+  const want = poolRank(pointSources, pointSlots.length, s => s.pos.distanceTo(poolCam) - s.distance - (s.slot ? POOL_HYST : 0));
+  const wanted = new Set(want);
+  for (const sl of pointSlots) if (sl.src && !wanted.has(sl.src)) { if (instant) poolUnbind(sl); else sl.target = 0; }
+  for (const s of want) {
+    if (s.slot) { s.slot.target = 1; continue; }                 // redemandée : annule un fondu de sortie
+    const free = pointSlots.find(sl => !sl.src);
+    if (!free) break;                                             // une place se libère à la fin d'un fondu
+    poolBind(free, s, instant ? 1 : 0);
+  }
+}
+
+function assignSpots(instant) {
+  const want = poolRank(spotSources, spotSlots.length, s => s.pos.distanceTo(poolCam) - (s.slot ? POOL_HYST : 0));
+  const wanted = new Set(want);
+  const wantShadow = new Set(poolRank(want, shadowSlots.length, s => s.pos.distanceTo(poolAhead) - (s.slot?.shadow ? POOL_HYST_SHADOW : 0)));
+  for (const sl of spotSlots) if (sl.src && !wanted.has(sl.src)) { if (instant) poolUnbind(sl); else sl.target = 0; }
+  for (const s of want) {
+    if (s.slot) { s.slot.target = 1; continue; }
+    const free = (wantShadow.has(s) ? shadowSlots : plainSlots).find(sl => !sl.src) || spotSlots.find(sl => !sl.src);
+    if (!free) continue;
+    poolBind(free, s, instant ? 1 : 0);
+    // la lumière part de zéro : son ombre peut être pleine tout de suite, rien ne saute
+    if (free.shadow) { free.shK = 1; free.shTarget = 1; free.handover = null; poolShadowRender(free); }
+  }
+  // ombres : un lampadaire qui la mérite mais attend dans un projecteur sans ombre
+  for (const s of wantShadow) {
+    const P = s.slot;
+    if (!P || P.shadow) continue;
+    let H = shadowSlots.find(sl => !sl.src);
+    if (H) { poolMove(P, H); H.shK = 0; H.shTarget = 1; H.handover = null; poolShadowRender(H); continue; }
+    if (shadowSlots.some(sl => sl.handover === s)) continue;    // échange déjà en cours
+    H = shadowSlots.find(sl => sl.src && !wantShadow.has(sl.src) && !sl.handover);
+    if (H) { H.handover = s; H.shTarget = 0; lightPool.stats.handovers++; }   // on efface d'abord l'ombre actuelle
+  }
+}
+
+function poolAssign(camera, instant) {
+  poolCam.copy(camera.position);
+  poolFwd.set(0, 0, -1).applyQuaternion(camera.quaternion); poolFwd.y = 0;
+  if (poolFwd.lengthSq() < 1e-4) poolFwd.set(0, 0, -1); else poolFwd.normalize();   // regard vertical : direction par défaut
+  poolAhead.copy(poolCam).addScaledVector(poolFwd, SHADOW_AHEAD);
+  assignPoints(instant);
+  assignSpots(instant);
+}
+
+/** Crée les vraies lumières (APRÈS la construction de la rue, AVANT toute compilation) et
+ *  fait une première répartition, sans fondu, autour de la caméra. */
+function initLightPool(camera) {
+  let fixed = 0;
+  scene.traverse(o => { if (o.isPointLight) fixed++; });          // néon, lueur de la ville : restent fixes
+  for (let i = 0; i < Math.max(0, POINT_LIGHT_SLOTS - fixed); i++) {
+    const l = new THREE.PointLight(0x000000, 0, 0.001, 2); l.name = 'lumiere-pool';
+    poolPark(l); scene.add(l);
+    pointSlots.push({ light: l, shadow: false, src: null, fade: 0, target: 0 });
+  }
+  for (let i = 0; i < SPOT_SLOTS; i++) {
+    const shadow = i < SPOT_SHADOW_SLOTS;
+    const l = new THREE.SpotLight(0x000000, 0, 0.001, 1.1, 0.8, 2); l.name = 'projecteur-pool';
+    if (shadow) {
+      l.castShadow = true; l.shadow.mapSize.set(1024, 1024);
+      l.shadow.camera.near = 0.45; l.shadow.camera.far = 30; l.shadow.bias = -0.0005; l.shadow.radius = 1;
+    }
+    scene.add(l); scene.add(l.target); poolPark(l);
+    const sl = { light: l, shadow, src: null, fade: 0, target: 0, shK: 1, shTarget: 1, handover: null };
+    spotSlots.push(sl); (shadow ? shadowSlots : plainSlots).push(sl);
+  }
+  // ombres à la demande, lumière par lumière (la 1re image les calcule toutes)
+  scene.traverse(o => { if (o.isLight && o.castShadow) { o.shadow.autoUpdate = false; o.shadow.needsUpdate = !o.name.endsWith('-pool'); } });
+  renderer.shadowMap.needsUpdate = true;
+  poolAssign(camera, true);
+  lastAssignPos.copy(camera.position);
+}
+
+function poolFade(sl, dt) {
+  if (!sl.src) return;
+  const k = dt / POOL_FADE_S;
+  sl.fade = sl.target > sl.fade ? Math.min(sl.target, sl.fade + k) : Math.max(sl.target, sl.fade - k);
+  if (sl.fade <= 0 && sl.target <= 0) { poolUnbind(sl); return; }
+  sl.light.intensity = sl.src.intensity * (sl.src.flick?.k ?? 1) * sl.fade;   // scintillement du lampadaire compris
+}
+function poolShadowFade(H, dt) {
+  const k = dt / POOL_SHADOW_FADE_S;
+  H.shK = H.shTarget > H.shK ? Math.min(H.shTarget, H.shK + k) : Math.max(H.shTarget, H.shK - k);
+  if (H.handover && H.shK <= 0) {
+    // ombre effacée : les deux lampes échangent leur projecteur (image identique à cet instant),
+    // puis l'ombre réapparaît sur la nouvelle
+    const s = H.handover, P = s.slot;
+    H.handover = null;
+    if (H.src && P && P !== H && !P.shadow) { poolSwap(H, P); poolShadowRender(H); }
+    H.shTarget = 1;
+  }
+  H.light.shadow.radius = H.shK;
+}
+function followMoon(camera, dt) {
+  moonCooldown -= dt;
+  poolLead.copy(camera.position).addScaledVector(poolFwd, MOON_LEAD);
+  if (moonCooldown > 0 || Math.hypot(poolLead.x - moonCenter.x, poolLead.z - moonCenter.z) < MOON_MOVE) return;
+  moonCooldown = MOON_COOLDOWN;
+  moonCenter.set(poolLead.x, 0, poolLead.z);
+  moon.target.position.copy(moonCenter); moon.position.copy(moonCenter).add(MOON_OFFSET);
+  moon.target.updateMatrix(); moon.target.updateMatrixWorld(); moon.updateMatrix(); moon.updateMatrixWorld();
+  moon.shadow.needsUpdate = true; renderer.shadowMap.needsUpdate = true; lightPool.stats.moonMoves++;
+}
+
+/** À chaque image, APRÈS le scintillement des lampes (main.js) et avant le rendu. */
+function updateLightPool(dt, camera) {
+  assignTimer += dt;
+  if (assignTimer > 0.2 || camera.position.distanceToSquared(lastAssignPos) > 0.25) {
+    assignTimer = 0; lastAssignPos.copy(camera.position);
+    poolAssign(camera, false);
+  }
+  for (const sl of pointSlots) poolFade(sl, dt);
+  for (const sl of spotSlots) poolFade(sl, dt);
+  for (const H of shadowSlots) poolShadowFade(H, dt);
+  followMoon(camera, dt);
 }
 
 /* ───────────────────────── src/fx/snow.js ───────────────────────── */
@@ -5454,6 +5679,10 @@ const photoDebug = { state: pg, shoot: () => { pg.aimLatch = true; pg.shotPendin
   }
 }
 
+// Vraies lumières en nombre fixe, confiées aux sources les plus proches du joueur (après
+// la construction de la rue et le point de vue forcé, avant toute compilation de shader)
+initLightPool(camera);
+
 // Matrices FIGÉES : à chaque image, Three recompose la matrice de chacun des ~1 600
 // objets de la scène, alors que seule la caméra bouge (flocons et vapeur s'animent
 // dans leurs tampons ou leurs shaders, pas par leur position ; les lampes et les feux
@@ -5464,7 +5693,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
@@ -5496,7 +5725,15 @@ const windDir = WIND.clone().normalize();
 
 function animate() {
   requestAnimationFrame(animate);
-  const rawDt = clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;   // rawDt non borné : sert à mesurer les ips
+  const rawDt = clock.getDelta();                               // non borné : sert à mesurer les ips
+  frame(rawDt, clock.elapsedTime);
+}
+// Tests : faire avancer le jeu image par image depuis la console, même onglet masqué
+// (requestAnimationFrame y est suspendu) — window.__blizzard.tick(1 / 60, 30)
+window.__blizzard.tick = (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) frame(dt, clock.elapsedTime += dt); };
+
+function frame(rawDt, t) {
+  const dt = Math.min(rawDt, 0.05);
   const speed = updatePlayer(dt);
   if (updatePhotoGame(dt, t, speed)) updateScale();             // viseur / zoom : le champ de vision a changé
 
@@ -5529,6 +5766,7 @@ function animate() {
     if (f.uK) f.uK.value = k;                                   // globe et cône de lumière des lampadaires
     if (f.neon) neonMat.color.setScalar(1.9 * k);
   }
+  updateLightPool(dt, camera);                                  // lumières et ombres qui suivent le joueur (lit f.k)
 
   composer.render();
   afterRenderPhoto(t);                                          // capture d'une photo demandée (tampon encore plein)

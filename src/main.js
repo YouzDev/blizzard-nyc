@@ -16,6 +16,7 @@ import { neonMat, neonZ } from './world/neon.js';
 import './world/ambience.js';
 import { updateTrafficLights } from './world/intersection.js';
 import { flickerLights } from './world/lightRegistry.js';
+import { initLightPool, updateLightPool, lightPool } from './world/lightPool.js';
 
 import { WIND, snowFar, snowMid, updateSnow, updateLampUniforms } from './fx/snow.js';
 import { steamMats, updateSteam } from './fx/steam.js';
@@ -45,6 +46,10 @@ import { prepareScene, startup } from './core/preload.js';
   }
 }
 
+// Vraies lumières en nombre fixe, confiées aux sources les plus proches du joueur (après
+// la construction de la rue et le point de vue forcé, avant toute compilation de shader)
+initLightPool(camera);
+
 // Matrices FIGÉES : à chaque image, Three recompose la matrice de chacun des ~1 600
 // objets de la scène, alors que seule la caméra bouge (flocons et vapeur s'animent
 // dans leurs tampons ou leurs shaders, pas par leur position ; les lampes et les feux
@@ -55,7 +60,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
@@ -87,7 +92,15 @@ const windDir = WIND.clone().normalize();
 
 function animate() {
   requestAnimationFrame(animate);
-  const rawDt = clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;   // rawDt non borné : sert à mesurer les ips
+  const rawDt = clock.getDelta();                               // non borné : sert à mesurer les ips
+  frame(rawDt, clock.elapsedTime);
+}
+// Tests : faire avancer le jeu image par image depuis la console, même onglet masqué
+// (requestAnimationFrame y est suspendu) — window.__blizzard.tick(1 / 60, 30)
+window.__blizzard.tick = (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) frame(dt, clock.elapsedTime += dt); };
+
+function frame(rawDt, t) {
+  const dt = Math.min(rawDt, 0.05);
   const speed = updatePlayer(dt);
   if (updatePhotoGame(dt, t, speed)) updateScale();             // viseur / zoom : le champ de vision a changé
 
@@ -120,6 +133,7 @@ function animate() {
     if (f.uK) f.uK.value = k;                                   // globe et cône de lumière des lampadaires
     if (f.neon) neonMat.color.setScalar(1.9 * k);
   }
+  updateLightPool(dt, camera);                                  // lumières et ombres qui suivent le joueur (lit f.k)
 
   composer.render();
   afterRenderPhoto(t);                                          // capture d'une photo demandée (tampon encore plein)

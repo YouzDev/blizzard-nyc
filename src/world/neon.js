@@ -31,7 +31,8 @@ export let neonMat;
   const red = new THREE.SpotLight(0xff2e1c, 220, 13, 1.25, 0.9, 2);
   red.position.set(-FACADE_X + 1.4, sy - 0.4, neonZ);
   red.target.position.set(-FACADE_X + 3.5, 0, neonZ + 1.5); scene.add(red); scene.add(red.target);
-  red.castShadow = true; red.shadow.mapSize.set(1024, 1024); red.shadow.bias = -0.0005; red.shadow.radius = 4;
+  // radius = INTENSITÉ de l'ombre (1 = pleine) dans notre calcul des lumières, voir core/lightLoop.js
+  red.castShadow = true; red.shadow.mapSize.set(1024, 1024); red.shadow.bias = -0.0005; red.shadow.radius = 1;
   const redFill = new THREE.PointLight(0xff3a24, 26, 16, 2); redFill.position.set(-FACADE_X + 1.2, sy, neonZ); scene.add(redFill);
   const neonFlicker = { lights: [red, redFill], base: [220, 26], neon: true, seed: 0, k: 1 };
   flickerLights.push(neonFlicker);

@@ -7,7 +7,7 @@ import { lampPaint, glowTex } from '../textures/index.js';
 import { usePhoto } from '../textures/photo.js';
 import { MAT } from './materials.js';
 import { addCollider, shadowed } from './collisions.js';
-import { flickerLights, lampPositions } from './lightRegistry.js';
+import { flickerLights, lampPositions, addPointSource, addSpotSource } from './lightRegistry.js';
 import { addContactShadow } from './contactShadows.js';
 import { doorGap } from './buildings.js';
 import { addSubject, boxAt } from '../game/subjects.js';
@@ -122,7 +122,7 @@ function placed(geo, x, y, z, rx = 0, ry = 0, rz = 0) {
   return g;
 }
 
-function buildLamppost(x, z, side, castShadow) {
+function buildLamppost(x, z, side) {
   const g = new THREE.Group(), metal = [], snow = [];
   // socle tourné (profil ornemental)
   const profile = [[0, 0], [0.36, 0], [0.36, 0.12], [0.3, 0.18], [0.3, 0.4], [0.22, 0.5], [0.2, 0.9], [0.24, 1.0], [0.16, 1.1], [0.1, 1.2]].map(p => new THREE.Vector2(p[0], p[1]));
@@ -205,20 +205,17 @@ function buildLamppost(x, z, side, castShadow) {
   const glow = new THREE.Mesh(new THREE.SphereGeometry(GLOW_R, 24, 16), glowMat);
   glow.position.set(lantX, LAMP_Y, 0); glow.frustumCulled = true; g.add(glow);
 
-  // Éclairage : spot chaud vers le trottoir (ombres) + point doux pour les façades
-  const spot = new THREE.SpotLight(0xffcc94, 82, 30, 1.1, 0.8, 2);
-  spot.position.set(lantX, LAMP_Y, 0);
-  spot.target.position.set(lantX * 1.4, 0, 0);
-  g.add(spot); g.add(spot.target);
-  if (castShadow) {
-    spot.castShadow = true; spot.shadow.mapSize.set(1024, 1024);
-    spot.shadow.camera.near = 0.45; spot.shadow.camera.far = 30; spot.shadow.bias = -0.0005; spot.shadow.radius = 4;
-  }
+  // Éclairage : spot chaud vers le trottoir + point doux pour les façades. Ce sont des
+  // SOURCES : les vraies lumières (et les ombres) vont aux lampadaires les plus proches du
+  // joueur, voir world/lightPool.js.
+  const flick = { lights: [], base: [], halos, uK, seed: Math.random() * 10 };
+  flickerLights.push(flick);
+  addSpotSource({ pos: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y, z), target: new THREE.Vector3(x + lantX * 1.4, SIDEWALK_H, z),
+    color: new THREE.Color(0xffcc94), intensity: 82, distance: 30, angle: 1.1, penumbra: 0.8, flick });
   // Remplissage : c'est lui qui décolle les façades du noir. Sur la référence, la
   // brique autour de chaque lampadaire est nettement lisible ; sans ce point, on
   // n'a qu'un mur noir et une flaque de lumière au sol.
-  const fill = new THREE.PointLight(0xffb266, 14, 24, 2); fill.position.set(lantX, LAMP_Y + 0.1, 0); g.add(fill);
-  flickerLights.push({ lights: [spot, fill], base: [82, 14], halos, uK, seed: Math.random() * 10 });
+  addPointSource({ pos: new THREE.Vector3(x + lantX, SIDEWALK_H + LAMP_Y + 0.1, z), color: new THREE.Color(0xffb266), intensity: 14, distance: 24, flick });
 
   g.position.set(x, SIDEWALK_H, z); scene.add(g);
   // emprise explicite : la boîte du groupe engloberait la sphère de diffusion de 4,5 m
@@ -284,8 +281,8 @@ function buildDrift(x, y, z, sx, sz) {
 // Placement
 let lampIndex = 0;
 for (let z = LAMP_Z0; z < STREET_Z_MAX; z += LAMP_PITCH) {   // grille connue aussi du rebond sur les façades (weathering.js)
-  buildLamppost(-(ROAD_HALF + 0.55), z, -1, z > -30 && z < 25);
-  buildLamppost( (ROAD_HALF + 0.55), z + LAMP_PITCH / 2, 1, z + LAMP_PITCH / 2 > -30 && z + LAMP_PITCH / 2 < 25);
+  buildLamppost(-(ROAD_HALF + 0.55), z, -1);
+  buildLamppost( (ROAD_HALF + 0.55), z + LAMP_PITCH / 2, 1);
   lampIndex++;
 }
 for (let z = STREET_Z_MIN + 3; z < STREET_Z_MAX; z += rnd(8, 15)) {

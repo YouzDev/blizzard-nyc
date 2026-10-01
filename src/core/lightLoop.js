@@ -21,6 +21,11 @@ import * as THREE from 'three';
    0 … NUM_*_SHADOWS − 1, la boucle prend la suite.
    Non géré : les projecteurs à texture (SpotLight.map) — le shader refuserait de
    compiler avec un message clair (#error) si on en ajoutait un.
+   INTENSITÉ D'OMBRE des projecteurs : `light.shadow.radius` (0 → pas d'ombre, 1 → ombre
+   pleine). Avec les ombres PCFSoft, Three r160 ne se sert pas de ce rayon (vérifié dans
+   getShadow) : on le réutilise pour faire apparaître / disparaître en fondu l'ombre d'un
+   lampadaire quand world/lightPool.js la confie à un autre. ⚠ Garder radius dans [0, 1] sur
+   tout projecteur à ombre (le néon : 1) ; en PCF simple ou VSM il redeviendrait un rayon.
 
    Mesures / tests (URL) : ?lightloop=0 remet le morceau d'origine ; ?lightcompare
    compile les deux versions (bascule par le define BLZ_LIGHTS_ORIGINAL) pour comparer
@@ -69,7 +74,7 @@ const SPOT_BLOCK = `#if ( NUM_SPOT_LIGHTS > 0 ) && defined( RE_Direct )
 		spotLight = spotLights[ i ];
 		getSpotLightInfo( spotLight, geometryPosition, directLight );
 		spotLightShadow = spotLightShadows[ i ];
-		directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ) : 1.0;
+		directLight.color *= ( directLight.visible && receiveShadow ) ? mix( 1.0, getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ), clamp( spotLightShadow.shadowRadius, 0.0, 1.0 ) ) : 1.0;
 		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 	}
 	#pragma unroll_loop_end

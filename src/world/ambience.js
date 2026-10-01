@@ -10,7 +10,7 @@ import { scene, skyMat } from '../core/scene.js';
 // C'est cette lumière-là — pas les lampadaires — qui fait « lire » la neige comme
 // blanche ; les briques, elles, restent sombres (roughness élevée, albédo faible).
 scene.add(new THREE.HemisphereLight(0x4a5f84, 0x1c2431, 0.24));   // couleur « sol » relevée : aucune sous-face ne doit rendre noir pur
-const moon = new THREE.DirectionalLight(0x8ea6d4, 0.17);
+export const moon = new THREE.DirectionalLight(0x8ea6d4, 0.17);   // sa carte d'ombre suit le joueur (world/lightPool.js)
 moon.position.set(-25, 45, -20); moon.castShadow = true;
 moon.shadow.mapSize.set(2048, 2048);
 moon.shadow.camera.left = -45; moon.shadow.camera.right = 45; moon.shadow.camera.top = 45; moon.shadow.camera.bottom = -45;

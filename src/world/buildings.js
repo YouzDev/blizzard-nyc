@@ -14,6 +14,7 @@ import { makeInteriorMaterial } from './shopInterior.js';
 import { usePhoto } from '../textures/photo.js';
 import { snowPhoto } from './snowPhoto.js';
 import { addSubject, boxAt } from '../game/subjects.js';
+import { addPointSource } from './lightRegistry.js';
 
 /* =====================================================================
    6. BÂTIMENTS : soubassement en pierre, briques, fenêtres, climatiseurs,
@@ -377,7 +378,7 @@ function buildStorefront(side, zc, w, o) {
       const os = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.3), new THREE.MeshBasicMaterial({ map: openSignTex, color: new THREE.Color().setScalar(o.isDeli ? 1.8 : 1.1) }));
       os.position.set(fx(D - 0.07), 2.05, doorEnd < 0 ? seg[1] - 0.5 : seg[0] + 0.5); os.rotation.y = rotY; scene.add(os);
     }
-    const l = new THREE.PointLight(0xffc98a, 7, 9, 2); l.position.set(fx(1.1), 2.5, zc); scene.add(l);
+    addPointSource({ pos: new THREE.Vector3(fx(1.1), 2.5, zc), color: new THREE.Color(0xffc98a), intensity: 7, distance: 9 });
     // climatiseur planté dans l'imposte, une fois sur deux
     if (Math.random() < 0.5) {
       const ac = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), MAT.concrete)); ac.position.set(fx(0.3), yGlass + 0.28, dzm + (doorEnd < 0 ? 1.6 : -1.6)); scene.add(ac);
@@ -405,7 +406,7 @@ function buildStorefront(side, zc, w, o) {
       const cone = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.14, 12), MAT.metal); cone.position.set(fx(reach), ySign1 + 0.06, z); scene.add(cone);
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.0, 1.2) })); bulb.position.set(fx(reach), ySign1 - 0.02, z); scene.add(bulb);
     }
-    const sl = new THREE.PointLight(0xffe2b0, 4, 7, 2); sl.position.set(fx(D + 0.6), ySign1 - 0.2, zc); scene.add(sl);
+    addPointSource({ pos: new THREE.Vector3(fx(D + 0.6), ySign1 - 0.2, zc), color: new THREE.Color(0xffe2b0), intensity: 4, distance: 7 });
   }
 
   // --- Store à lambrequin sous l'enseigne, incliné vers la rue, neige dessus
@@ -571,7 +572,7 @@ function buildEntrance(side, z, yDoor) {
   bulb.position.set(X(0.28), ly + 0.05, lz); scene.add(bulb);
   // la lumière part d'entre la lanterne et la porte, un peu devant : posée à la lanterne, elle
   // arrivait en rasant sur les vantaux au fond de l'embrasure et la porte restait noire
-  const lamp = new THREE.PointLight(0xffc27a, 5, 6, 2); lamp.position.set(X(0.85), yDoor + DH - 0.1, z + 0.45); scene.add(lamp);
+  addPointSource({ pos: new THREE.Vector3(X(0.85), yDoor + DH - 0.1, z + 0.45), color: new THREE.Color(0xffc27a), intensity: 5, distance: 6 });
 }
 
 /** Perron de brownstone + clôture en fer forgé (comme la zone grillagée de l'image). */
