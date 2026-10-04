@@ -77,7 +77,8 @@ function parkGateLeaf(x0, x1, h) {
 }
 
 // --- piliers, portail fermé (chaîne et cadenas), portillons
-PIER_X.forEach((x, i) => parkPier(x, zG, i === 0 || i === 3 ? 0.72 : 0.84, i === 0 || i === 3 ? 2.5 : 2.8, i === 1 || i === 2));
+const PIER_H_OUT = 2.5, WALL_TOP = PIER_H_OUT + 0.08 - 0.2;   // murets : 20 cm sous le haut (corniche) des piliers qu'ils rejoignent
+PIER_X.forEach((x, i) => parkPier(x, zG, i === 0 || i === 3 ? 0.72 : 0.84, i === 0 || i === 3 ? PIER_H_OUT : 2.8, i === 1 || i === 2));
 parkGateLeaf(-2.18, 0, 2.15); parkGateLeaf(0, 2.18, 2.15);
 for (const s of [-1, 1]) parkGateLeaf(s < 0 ? PIER_X[0] + 0.36 : 3.02, s < 0 ? -3.02 : PIER_X[3] - 0.36, 1.75);
 for (let k = 0; k < 5; k++) { const l = new THREE.TorusGeometry(0.035, 0.008, 4, 8); l.rotateY(k % 2 ? Math.PI / 2 : 0); l.translate(0, 1.0 - k * 0.055, zG + 0.03); fenceGeoms.push(l); }
@@ -91,14 +92,14 @@ for (const s of [-1, 1]) {
   const pt = k => { const a = (k / N) * Math.PI / 2; return new THREE.Vector3(cx + s * R * Math.sin(a), 0, cz - R * Math.cos(a)); };
   for (let k = 0; k < N; k++) {
     const a = pt(k), b = pt(k + 1), mid = a.clone().add(b).multiplyScalar(0.5), len = a.distanceTo(b) + 0.06, ang = Math.atan2(b.x - a.x, b.z - a.z);
-    for (const [w, hh, y] of [[0.5, 1.12, 0.5], [0.64, 0.12, 1.12]]) {
+    for (const [w, hh, y] of [[0.5, WALL_TOP - 0.06, (WALL_TOP - 0.18) / 2], [0.64, 0.12, WALL_TOP - 0.06]]) {
       const g = new THREE.BoxGeometry(w, hh, len); g.rotateY(ang); g.translate(mid.x, y, mid.z); bsPlace(masonry, g, 5);
     }
-    bsSnowStrip(new THREE.Vector3(a.x, 1.18, a.z), new THREE.Vector3(b.x, 1.18, b.z), 0.6, 0.15);
+    bsSnowStrip(new THREE.Vector3(a.x, WALL_TOP, a.z), new THREE.Vector3(b.x, WALL_TOP, b.z), 0.6, 0.15);
     RIGHT.collider(mid.x, mid.z, Math.abs(b.x - a.x) / 2 + 0.3, Math.abs(b.z - a.z) / 2 + 0.3);
     buildDrift(RIGHT, mid.x - s * 0.2 * Math.cos(ang), SIDEWALK_H, mid.z - 0.3 * Math.sin(Math.abs(ang)), rnd(0.6, 1.0), rnd(0.9, 1.4), rnd(0.3, 0.6));
   }
-  parkPier(s * FACADE_X, zG + R, 0.55, 1.5);
+  parkPier(s * FACADE_X, zG + R, 0.62, PIER_H_OUT);
 }
 // neige poussée contre le portail fermé (personne ne l'a ouvert depuis le début de la tempête)
 for (let x = -PARK_GATE_W + 0.6; x < PARK_GATE_W - 0.4; x += rnd(0.9, 1.4)) buildDrift(RIGHT, x, 0.06, zG + 0.55, rnd(0.8, 1.3), rnd(0.6, 0.9), rnd(0.35, 0.65));
@@ -113,10 +114,10 @@ for (let x = -PARK_GATE_W + 0.6; x < PARK_GATE_W - 0.4; x += rnd(0.9, 1.4)) buil
   const slab = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2.14, 0.66, 0.1), parkStone)); g.add(slab);
   const snow = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.06, 0.14), MAT.snow); snow.position.y = 0.36; g.add(snow);
   g.rotation.set(-0.16, Math.atan2(-Math.sin(a), -Math.cos(a)) + Math.PI, 0, 'YXZ');
-  g.position.set(px, 1.2, pz); RIGHT.add(g);
+  g.position.set(px, 1.5, pz); RIGHT.add(g);
   // petite applique qui l'éclaire (sinon, à 7 m des lanternes du portail, on ne lit rien)
   addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(px + 1.3 * Math.sin(a), 2.4, pz + 1.3 * Math.cos(a))), color: new THREE.Color(0xffd2a0), intensity: 3.5, distance: 5 });
-  addSubject({ label: 'Le panneau du Balloch Castle Country Park', value: 0.8, box: RIGHT.box(boxAt(px, pz, 1.1, 1.1, 0.8, 1.6)) });
+  addSubject({ label: 'Le panneau du Balloch Castle Country Park', value: 0.8, box: RIGHT.box(boxAt(px, pz, 1.1, 1.1, 1.1, 1.9)) });
 }
 
 // --- la loge du gardien, derrière le muret de droite : pierre, toit d'ardoise en pavillon sous la
