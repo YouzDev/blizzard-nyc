@@ -72,6 +72,31 @@ function makeSnowSystem(count, box, sizeMin, sizeMax, fall, windScale, opacity) 
 export const snowFar  = makeSnowSystem(15000, new THREE.Vector3(80, 26, 80), 0.045, 0.11, 2.4, 1.0, 0.9);
 export const snowMid  = makeSnowSystem(3600,  new THREE.Vector3(30, 12, 30),  0.07, 0.14, 3.0, 1.15, 0.75);
 
+/* LE VENT TOURNE (demande utilisateur). WIND est modifié EN PLACE à chaque image (même vecteur partagé
+   par les flocons, la vapeur — uniforme uWind —, la neige sur l'objectif et le son), sa force reste
+   celle d'origine. Deux mouvements s'ajoutent à la direction de départ :
+   - une lente DÉRIVE (deux sinus lents : jusqu'à ~±40° sur une à deux minutes) ;
+   - des SAUTES DE VENT : toutes les 25 à 60 s, de préférence pendant une rafale, la direction part
+     de 35 à 75° d'un côté en ~2 s, tient 6 à 12 s, puis revient en ~5 s.
+   windState : inspection (window.__blizzard.windState). */
+const WIND_BASE = WIND.clone(), WIND_SPEED = WIND_BASE.length(), WIND_A0 = Math.atan2(WIND_BASE.x, WIND_BASE.z);
+export const windState = { angleDeg: 0, shift: 0, shiftTarget: 0, phase: 'calme', next: 25 + Math.random() * 25, hold: 0 };
+export function updateWindDirection(dt, t) {
+  const S = windState;
+  const drift = 0.42 * Math.sin(t * 0.045 + 1.3) + 0.24 * Math.sin(t * 0.11 + 0.4);
+  S.next -= dt;
+  if (S.phase === 'calme' && S.next <= 0 && (windGust(t) > 1.25 || S.next < -8)) {
+    S.phase = 'saute'; S.shiftTarget = (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 0.7); S.hold = 6 + Math.random() * 6;
+  } else if (S.phase === 'saute' && Math.abs(S.shift - S.shiftTarget) < 0.03) S.phase = 'tient';
+  else if (S.phase === 'tient' && (S.hold -= dt) <= 0) { S.phase = 'retour'; S.shiftTarget = 0; }
+  else if (S.phase === 'retour' && Math.abs(S.shift) < 0.02) { S.phase = 'calme'; S.next = 25 + Math.random() * 35; }
+  const rate = S.phase === 'saute' ? 1.4 : 0.45;                     // part vite, revient lentement
+  S.shift += (S.shiftTarget - S.shift) * (1 - Math.exp(-dt * rate));
+  const a = WIND_A0 + drift + S.shift;
+  WIND.set(Math.sin(a) * WIND_SPEED, 0, Math.cos(a) * WIND_SPEED);
+  S.angleDeg = Math.round((drift + S.shift) * 180 / Math.PI);
+}
+
 /** Force des rafales (≈ 0,2 à 1,8, moyenne 1) : partagée par les flocons et le son du vent. */
 export function windGust(t) { return 1 + 0.4 * Math.sin(t * 0.6) + 0.25 * Math.sin(t * 2.1 + 1.0) + 0.15 * Math.sin(t * 5.3); }
 

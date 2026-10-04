@@ -21,7 +21,7 @@ import { flickerLights } from './world/lightRegistry.js';
 import { initLightPool, updateLightPool, lightPool, refreshPoolShadows } from './world/lightPool.js';
 import { updateStreetVisibility, streetZones } from './world/street.js';
 
-import { WIND, snowFar, snowMid, updateSnow, updateLampUniforms } from './fx/snow.js';
+import { WIND, snowFar, snowMid, updateSnow, updateLampUniforms, updateWindDirection, windState } from './fx/snow.js';
 import { steamMats, updateSteam } from './fx/steam.js';
 import { facePass, lens } from './fx/facePass.js';
 import { composer } from './fx/postprocessing.js';
@@ -65,7 +65,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones, windState };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
@@ -93,7 +93,7 @@ window.__blizzard = { camera, scene, renderer, composer, collides, step: updateP
    ===================================================================== */
 const clock = new THREE.Clock();
 let fpsTimer = 0, frames = 0;
-const windDir = WIND.clone().normalize();
+const windDir = new THREE.Vector3();                            // direction du vent, recalculée à chaque image (il tourne)
 
 function animate() {
   requestAnimationFrame(animate);
@@ -110,6 +110,7 @@ function frame(rawDt, t) {
   updateStreetVisibility(camera);                               // rue de gauche : on ne dessine que ce que l'ouverture du carrefour laisse voir
   if (updatePhotoGame(dt, t, speed)) updateScale();             // viseur / zoom : le champ de vision a changé
 
+  updateWindDirection(dt, t); windDir.copy(WIND).normalize();   // le vent tourne : dérive lente et sautes de vent
   updateLampUniforms();
   updateSnow(snowFar, dt, t); updateSnow(snowMid, dt, t);
   updateSteam(dt);

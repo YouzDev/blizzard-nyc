@@ -19,8 +19,7 @@ const soundBtn = document.getElementById('sound');
 const SOUND_KEY = 'blizzard-son', SOUND_VOL = 0.4;
 let audioCtx = null, windNodes = null, soundOn = false, soundStopTimer = 0;
 try { soundOn = localStorage.getItem(SOUND_KEY) === '1'; } catch (e) { /* stockage bloqué : son coupé */ }
-const windFrom = { x: -WIND.x, z: -WIND.z };                 // direction D'OÙ vient le vent, normalisée
-{ const l = Math.hypot(windFrom.x, windFrom.z); windFrom.x /= l; windFrom.z /= l; }
+const windFrom = { x: 0, z: 0 };                             // direction D'OÙ vient le vent, normalisée (le vent tourne : recalculée)
 
 /** Bruit rose stéréo (deux canaux indépendants → son large) qui boucle sans clic :
  *  la fin est fondue dans le début, et la boucle repart juste après ce fondu. */
@@ -104,6 +103,7 @@ export function updateWind(t, camera) {
   if (!soundOn || !windNodes || audioCtx.state !== 'running') return;
   const { rumble, whistle, hiss, pan } = windNodes, now = audioCtx.currentTime, k = 0.25;
   const gust = Math.min(Math.max((windGust(t) - 0.2) / 1.6, 0), 1);   // 0 = accalmie, 1 = pic de rafale
+  { const l = Math.hypot(WIND.x, WIND.z) || 1; windFrom.x = -WIND.x / l; windFrom.z = -WIND.z / l; }
   const e = camera.matrixWorld.elements;                                 // colonne 0 = droite, colonne 2 = arrière
   const facing = -(e[8] * windFrom.x + e[10] * windFrom.z);             // 1 = face au vent, −1 = dos au vent
   const side = e[0] * windFrom.x + e[2] * windFrom.z;                    // > 0 : le vent vient de la droite
