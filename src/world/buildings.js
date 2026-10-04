@@ -601,7 +601,7 @@ function buildGroundFloor(side, z0, depthZ, doorZ) {
 const doorTex = {}, doorMats = new Map();
 let hallGlassMat = null, brassMat = null;
 const WOOD_TINTS = [0xffffff, 0xe0c8b0, 0xa88a74];            // chêne clair, teinte miel, noyer
-function doorMaterial() {
+export function doorMaterial() {
   const wood = Math.random() < 0.5;
   const kind = wood ? 'wood' : 'paint', color = wood ? WOOD_TINTS[Math.floor(Math.random() * WOOD_TINTS.length)] : DOOR_COLORS[Math.floor(Math.random() * DOOR_COLORS.length)];
   const key = kind + color;
@@ -614,7 +614,16 @@ function doorMaterial() {
   return doorMats.get(key);
 }
 /** UV d'une pièce d'huisserie ramenées sur un bout de montant (sinon toute la porte y serait écrasée). */
-function stileUV(g) { const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, 0.02 + uv.getX(i) * 0.1, 0.35 + uv.getY(i) * 0.3); return g; }
+export function stileUV(g) { const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, 0.02 + uv.getX(i) * 0.1, 0.35 + uv.getY(i) * 0.3); return g; }
+
+/** Verre de hall éclairé et laiton, partagés par toutes les portes (créés au premier besoin). */
+export function entranceMats() {
+  if (!hallGlassMat) {
+    hallGlassMat = new THREE.MeshBasicMaterial({ map: makeHallGlassTexture(), color: new THREE.Color(0.78, 0.62, 0.46) });   // hall éclairé derrière le verre dépoli
+    brassMat = new THREE.MeshStandardMaterial({ color: 0xb58d45, metalness: 1, roughness: 0.32 });
+  }
+  return { hallGlassMat, brassMat };
+}
 
 /** Entrée de perron : encadrement de pierre (piédroits, corniche sur consoles), imposte
  *  éclairée au numéro doré, double porte à panneaux moulurés (texture de vantail entière,
@@ -636,10 +645,7 @@ export function buildEntrance(side, z, yDoor, o = {}) {
   worldBox(trim, 0.28, 0.14, DW + 0.6, X(0.14), yDoor + DH + 0.62, z);                                    // linteau
   worldBox(trim, 0.42, 0.14, DW + 1.0, X(0.21), yDoor + DH + 0.92, z);                                    // corniche
   snowPad(X(0.21), yDoor + DH + 0.99, z, 0.42, DW + 0.96, 0.14);
-  if (!hallGlassMat) {
-    hallGlassMat = new THREE.MeshBasicMaterial({ map: makeHallGlassTexture(), color: new THREE.Color(0.78, 0.62, 0.46) });   // hall éclairé derrière le verre dépoli
-    brassMat = new THREE.MeshStandardMaterial({ color: 0xb58d45, metalness: 1, roughness: 0.32 });
-  }
+  entranceMats();
   const brass = [];
   // imposte : une seule vitre, le numéro de l'immeuble à la feuille d'or (pairs à gauche, impairs à droite)
   const num = 2 * Math.floor(rnd(40, 240)) + (side > 0 ? 1 : 0);

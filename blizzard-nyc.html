@@ -3361,6 +3361,15 @@ function doorMaterial() {
 /** UV d'une pièce d'huisserie ramenées sur un bout de montant (sinon toute la porte y serait écrasée). */
 function stileUV(g) { const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, 0.02 + uv.getX(i) * 0.1, 0.35 + uv.getY(i) * 0.3); return g; }
 
+/** Verre de hall éclairé et laiton, partagés par toutes les portes (créés au premier besoin). */
+function entranceMats() {
+  if (!hallGlassMat) {
+    hallGlassMat = new THREE.MeshBasicMaterial({ map: makeHallGlassTexture(), color: new THREE.Color(0.78, 0.62, 0.46) });   // hall éclairé derrière le verre dépoli
+    brassMat = new THREE.MeshStandardMaterial({ color: 0xb58d45, metalness: 1, roughness: 0.32 });
+  }
+  return { hallGlassMat, brassMat };
+}
+
 /** Entrée de perron : encadrement de pierre (piédroits, corniche sur consoles), imposte
  *  éclairée au numéro doré, double porte à panneaux moulurés (texture de vantail entière,
  *  relief en normal map), vitres de hall dépolies derrière une grille en fer forgé,
@@ -3381,10 +3390,7 @@ function buildEntrance(side, z, yDoor, o = {}) {
   worldBox(trim, 0.28, 0.14, DW + 0.6, X(0.14), yDoor + DH + 0.62, z);                                    // linteau
   worldBox(trim, 0.42, 0.14, DW + 1.0, X(0.21), yDoor + DH + 0.92, z);                                    // corniche
   snowPad(X(0.21), yDoor + DH + 0.99, z, 0.42, DW + 0.96, 0.14);
-  if (!hallGlassMat) {
-    hallGlassMat = new THREE.MeshBasicMaterial({ map: makeHallGlassTexture(), color: new THREE.Color(0.78, 0.62, 0.46) });   // hall éclairé derrière le verre dépoli
-    brassMat = new THREE.MeshStandardMaterial({ color: 0xb58d45, metalness: 1, roughness: 0.32 });
-  }
+  entranceMats();
   const brass = [];
   // imposte : une seule vitre, le numéro de l'immeuble à la feuille d'or (pairs à gauche, impairs à droite)
   const num = 2 * Math.floor(rnd(40, 240)) + (side > 0 ? 1 : 0);
@@ -3696,7 +3702,14 @@ const PARLOR_H = 4.1, UPPER_H = 3.35;
 // teintes (linéaires) : chocolat, brun-rouge, brun sombre, grès plus jeune, grès peint taupe
 const BS_TINTS = [[0.4, 0.22, 0.14], [0.46, 0.24, 0.15], [0.34, 0.2, 0.14], [0.5, 0.32, 0.22], [0.52, 0.47, 0.42]];
 const BS_CORNICE = [0x3a2c24, 0x1f2124, 0x2c3a2e, 0x4a2a24, 0x8a847c, 0x9a8f80];
-const BS_STYLES = [{ hood: 'pediment', stoop: 'iron' }, { hood: 'segment', stoop: 'iron' }, { hood: 'flat', stoop: 'stone' }, { hood: 'pediment', stoop: 'stone' }];
+// styles des terraces, d'après les photos de l'utilisateur : porte cintrée sous fronton à grandes consoles
+// et perron évasé à poteaux de fonte (Brooklyn Heights), frontons cintrés partout et perron à piliers de
+// grès, porte droite classique, perron BAS à murs pleins (Renaissance Revival)
+const BS_STYLES = [
+  { hood: 'pediment', stoop: 'grand', door: 'arch' }, { hood: 'segment', stoop: 'pier', door: 'arch' },
+  { hood: 'segment', stoop: 'iron', door: 'arch' }, { hood: 'flat', stoop: 'stone', door: 'flat' },
+  { hood: 'pediment', stoop: 'iron', door: 'flat' }, { hood: 'flat', stoop: 'stone', door: 'flat', low: true },
+];
 const BS_ROW_END = -RIGHT_END_X + (FACADE_X - PARK_GATE_W);   // les rangées s'arrêtent aux murets du parc
 /** Maisons construites (repère de la rue de droite) : props.js meuble leurs cours. */
 const brownHouses = [];
@@ -3711,6 +3724,7 @@ function bsFlush() {
   for (const [color, list] of bsCornice) RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(list.map(g => g.index ? g.toNonIndexed() : g)), paintMat(color, 0.6, 0.15))));
   if (bsGlobes.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsGlobes), bsGlobeMat));
   bsStoopGeoms = []; bsCornice = new Map(); bsGlobes = [];
+  bsFlushDecor();
 }
 
 /** Pose une géométrie (déjà placée, repère de la rue) avec des UV tirés de sa POSITION, selon
@@ -3791,58 +3805,233 @@ const bsBracketGeo = (() => {
   return g;
 })();
 
-/** Perron (repère de la rue) : 9 marches de grès, palier, rampes en fonte ou murs de pierre, neige. */
-function bsStoop(side, fx, zd, sty, face) {
+/** Géométrie d'un perron : n contremarches, pied à la profondeur `front`, palier jusqu'à la façade. */
+function stoopGeom(sty) {
+  const n = sty.low ? 6 : STOOP_N, yP = SIDEWALK_H + n * STOOP_RISE;
+  const land = sty.low ? 1.3 : STOOP_LAND, front = land + (n - 1) * STOOP_TREAD;
+  return { n, yP, land, front, nose: d => SIDEWALK_H + STOOP_RISE * (1 + (front - d) / STOOP_TREAD) };
+}
+
+/** Perron (repère de la rue) : marches de grès, palier, garde-corps, neige. Variantes (style de la
+ *  terrace, d'après les photos de l'utilisateur) :
+ *   - 'iron'  : rampes en fonte, poteau rond à boule ;
+ *   - 'grand' : marches du bas ÉVASÉES (arrondies), grands poteaux de fonte ouvragés sur un socle ;
+ *   - 'pier'  : murets de grès bas surmontés d'une rampe en fonte, gros piliers carrés au pied ;
+ *   - 'stone' : murs de perron pleins, chaperon, dé au pied (aussi pour les perrons BAS).
+ *  pairDir (±1) : côté du perron jumeau (le long de la rue) — les marches ne s'évasent pas de ce côté,
+ *  sinon les deux bases se chevaucheraient. Renvoie les lignes de main courante (décorations de fêtes). */
+function bsStoop(side, fx, zd, sty, face, pairDir = 0) {
   const ox = -side, X = d => fx + ox * d, V = (d, y, z) => new THREE.Vector3(X(d), y, z);
+  const G = stoopGeom(sty), { n, yP, land, front, nose } = G;
   const shoveled = Math.random() < 0.35;                         // certains ont déjà déblayé leur perron
-  const nose = d => SIDEWALK_H + STOOP_RISE * (1 + (AREA_W - d) / STOOP_TREAD);   // ligne des nez de marche
-  for (let i = 0; i < STOOP_N; i++) {
-    const dF = AREA_W - i * STOOP_TREAD, dB = i === STOOP_N - 1 ? 0 : dF - STOOP_TREAD, top = SIDEWALK_H + (i + 1) * STOOP_RISE;
-    bsBox(bsStoopGeoms, dF - dB, top + 0.1, STOOP_W, X((dF + dB) / 2), (top - 0.1) / 2, zd, 2.15);
-    bsBox(bsStoopGeoms, 0.05, 0.05, STOOP_W + 0.02, X(dF + 0.02), top - 0.03, zd, 2.15);          // nez de marche
+  const flare = sty.stoop === 'grand' || sty.stoop === 'pier' ? [0.34, 0.22, 0.1] : [];
+  for (let i = 0; i < n; i++) {
+    const dF = front - i * STOOP_TREAD, dB = i === n - 1 ? 0 : dF - STOOP_TREAD, top = SIDEWALK_H + (i + 1) * STOOP_RISE;
+    const ext = e => (pairDir === e ? 0 : flare[i] ?? 0), wx = STOOP_W + ext(-1) + ext(1), zm = zd + (ext(1) - ext(-1)) / 2;
+    bsBox(bsStoopGeoms, dF - dB, top + 0.1, wx, X((dF + dB) / 2), (top - 0.1) / 2, zm, 2.15);
+    bsBox(bsStoopGeoms, 0.05, 0.05, wx + 0.02, X(dF + 0.02), top - 0.03, zm, 2.15);              // nez de marche
+    for (const e of [-1, 1]) if (ext(e)) {                                                         // bouts arrondis des marches évasées
+      const c = new THREE.CylinderGeometry((dF - dB) / 2, (dF - dB) / 2, top + 0.1, 12); c.translate(X((dF + dB) / 2), (top - 0.1) / 2, zd + e * (STOOP_W / 2 + ext(e))); bsPlace(bsStoopGeoms, c, 2.15);
+    }
     const dc = (dF + dB) / 2, dw = dF - dB - 0.03;
     if (shoveled) {                                               // passage déblayé au milieu, neige aux bords
-      for (const e of [-1, 1]) snowPad(X(dc), top, zd + e * (STOOP_W / 2 - 0.23), dw, 0.4, 0.12);
+      for (const e of [-1, 1]) snowPad(X(dc), top, zm + e * (wx / 2 - 0.23), dw, 0.4, 0.12);
       snowPad(X(dc), top, zd, dw, 0.9, 0.025);
-    } else snowPad(X(dc), top, zd, dw, STOOP_W - 0.12, 0.13);
+    } else snowPad(X(dc), top, zm, dw, wx - 0.12, 0.13);
   }
+  // perron bas : une allée dégagée relie la grille au pied des marches
+  if (front < AREA_W - 0.2) snowPad(X((front + AREA_W) / 2), SIDEWALK_H + 0.06, zd, AREA_W - front, STOOP_W - 0.3, 0.05);
+  const rails = [];
   for (const e of [-1, 1]) {
-    const zs = zd + e * (STOOP_W / 2 - 0.06);
-    if (sty.stoop === 'iron') {
-      // rampe en fonte : main courante parallèle aux marches, barreaux, gros poteau au pied
-      const a = V(AREA_W - 0.12, nose(AREA_W - 0.12) + 0.9, zs), b = V(STOOP_LAND, PARLOR_Y + 0.9, zs), c = V(0.12, PARLOR_Y + 0.9, zs);
+    const zs = zd + e * (STOOP_W / 2 - 0.06), dFoot = front - 0.12;
+    if (sty.stoop === 'iron' || sty.stoop === 'grand' || sty.stoop === 'pier') {
+      const wall = sty.stoop === 'pier' ? 0.42 : 0;              // muret de grès sous la rampe
+      if (wall) {
+        bsSlopedWall(face, X, dFoot - 0.25, nose(dFoot - 0.25) + wall, land, yP + wall, SIDEWALK_H - 0.1, zs, 0.26);
+        bsBox(face, land - 0.05, yP + wall + 0.1, 0.26, X(land / 2 + 0.05), (yP + wall - 0.1) / 2, zs);
+        const cA = V(dFoot - 0.25, nose(dFoot - 0.25) + wall + 0.04, zs), cB = V(land, yP + wall + 0.04, zs), cC = V(0.05, yP + wall + 0.04, zs);
+        bsStrut(face, cA, cB, 0.32); bsStrut(face, cB, cC, 0.32);
+      }
+      // rampe en fonte : main courante parallèle aux marches, barreaux
+      const a = V(dFoot - (wall ? 0.3 : 0), nose(dFoot - (wall ? 0.3 : 0)) + 0.92, zs), b = V(land, yP + 0.92, zs), c = V(0.12, yP + 0.92, zs);
       bsStrut(fenceGeoms, a, b, 0.05); bsStrut(fenceGeoms, b, c, 0.05);
-      for (let d = AREA_W - 0.25; d > 0.15; d -= 0.13) {
-        const y0 = d > STOOP_LAND ? nose(d) : PARLOR_Y, y1 = d > STOOP_LAND ? nose(d) + 0.9 : PARLOR_Y + 0.9;
+      for (let d = dFoot - 0.13; d > 0.15; d -= 0.13) {
+        const y0 = (d > land ? nose(d) : yP) + wall, y1 = (d > land ? nose(d) : yP) + 0.92;
+        if (y1 - y0 < 0.1) continue;
         const g = new THREE.CylinderGeometry(0.012, 0.012, y1 - y0, 5); g.translate(X(d), (y0 + y1) / 2, zs); fenceGeoms.push(g);
       }
-      const post = new THREE.CylinderGeometry(0.07, 0.11, 1.25, 8); post.translate(X(AREA_W - 0.12), SIDEWALK_H + 0.62, zs); fenceGeoms.push(post);
-      const urn = new THREE.SphereGeometry(0.1, 10, 8); urn.translate(X(AREA_W - 0.12), SIDEWALK_H + 1.33, zs); fenceGeoms.push(urn);
-      const p2 = new THREE.BoxGeometry(0.07, 0.95, 0.07); p2.translate(X(STOOP_LAND), PARLOR_Y + 0.47, zs); fenceGeoms.push(p2);
+      const p2 = new THREE.BoxGeometry(0.07, 0.95, 0.07); p2.translate(X(land), yP + 0.47, zs); fenceGeoms.push(p2);
       bsSnowStrip(a.clone().setY(a.y + 0.025), b.clone().setY(b.y + 0.025), 0.07, 0.045);
       bsSnowStrip(b.clone().setY(b.y + 0.025), c.clone().setY(c.y + 0.025), 0.07, 0.045);
-      snowPad(X(AREA_W - 0.12), SIDEWALK_H + 1.4, zs, 0.16, 0.16, 0.08);
+      rails.push([a, b], [b, c]);
+      const zp = zs + e * (flare.length && pairDir !== e ? 0.28 : 0);              // pied du garde-corps (au-delà de la volée sur les marches évasées)
+      if (sty.stoop === 'iron') {
+        const post = new THREE.CylinderGeometry(0.07, 0.11, 1.25, 8); post.translate(X(dFoot), SIDEWALK_H + 0.62, zs); fenceGeoms.push(post);
+        const urn = new THREE.SphereGeometry(0.1, 10, 8); urn.translate(X(dFoot), SIDEWALK_H + 1.33, zs); fenceGeoms.push(urn);
+        snowPad(X(dFoot), SIDEWALK_H + 1.4, zs, 0.16, 0.16, 0.08);
+      } else if (sty.stoop === 'grand') {
+        // grand poteau de fonte ouvragé sur socle de grès, couronne en pointe
+        bsBox(bsStoopGeoms, 0.48, 0.42, 0.48, X(dFoot + 0.02), SIDEWALK_H + 0.11, zp, 2.15);
+        snowPad(X(dFoot + 0.02), SIDEWALK_H + 0.32, zp, 0.48, 0.48, 0.1);
+        const post = new THREE.LatheGeometry([[0, 0], [0.13, 0], [0.13, 0.08], [0.09, 0.14], [0.09, 0.9], [0.12, 0.98], [0.12, 1.06], [0.07, 1.12], [0.1, 1.2], [0.06, 1.3], [0.02, 1.42], [0, 1.45]].map(p => new THREE.Vector2(p[0], p[1])), 8);
+        post.translate(X(dFoot + 0.02), SIDEWALK_H + 0.32, zp); fenceGeoms.push(post);
+        // la rampe descend en volute jusqu'au poteau
+        bsStrut(fenceGeoms, V(dFoot, SIDEWALK_H + 1.24, zp), a, 0.045);
+        snowPad(X(dFoot + 0.02), SIDEWALK_H + 1.4, zp, 0.2, 0.2, 0.06);
+      } else {
+        // gros pilier carré en grès au pied, chapeau mouluré
+        bsBox(face, 0.56, 1.2, 0.56, X(dFoot + 0.04), SIDEWALK_H + 0.5, zp);
+        bsBox(face, 0.66, 0.12, 0.66, X(dFoot + 0.04), SIDEWALK_H + 1.14, zp);
+        bsBox(face, 0.42, 0.14, 0.42, X(dFoot + 0.04), SIDEWALK_H + 1.27, zp);
+        snowPad(X(dFoot + 0.04), SIDEWALK_H + 1.34, zp, 0.44, 0.44, 0.14);
+        snowPad(X(dFoot + 0.04), SIDEWALK_H + 1.2, zp, 0.64, 0.64, 0.06);
+      }
     } else {
       // murs de perron en grès, chaperon mouluré, gros dé au pied
-      bsSlopedWall(face, X, AREA_W - 0.35, nose(AREA_W - 0.35) + 0.75, STOOP_LAND, PARLOR_Y + 0.75, SIDEWALK_H - 0.1, zs, 0.24);
-      bsBox(face, STOOP_LAND - 0.05, PARLOR_Y + 0.85, 0.24, X(STOOP_LAND / 2 + 0.05), (PARLOR_Y + 0.65) / 2, zs);
-      const capA = V(AREA_W - 0.35, nose(AREA_W - 0.35) + 0.8, zs), capB = V(STOOP_LAND, PARLOR_Y + 0.8, zs), capC = V(0.05, PARLOR_Y + 0.8, zs);
+      const dW = dFoot - 0.23;
+      bsSlopedWall(face, X, dW, nose(dW) + 0.75, land, yP + 0.75, SIDEWALK_H - 0.1, zs, 0.24);
+      bsBox(face, land - 0.05, yP + 0.85, 0.24, X(land / 2 + 0.05), (yP + 0.65) / 2, zs);
+      const capA = V(dW, nose(dW) + 0.8, zs), capB = V(land, yP + 0.8, zs), capC = V(0.05, yP + 0.8, zs);
       bsStrut(face, capA, capB, 0.3); bsStrut(face, capB, capC, 0.3);
-      bsBox(face, 0.5, 1.2, 0.42, X(AREA_W - 0.27), SIDEWALK_H + 0.5, zs + e * 0.05);              // dé au pied
-      bsBox(face, 0.58, 0.1, 0.5, X(AREA_W - 0.27), SIDEWALK_H + 1.15, zs + e * 0.05);
+      bsBox(face, 0.5, 1.2, 0.42, X(dFoot - 0.15), SIDEWALK_H + 0.5, zs + e * 0.05);              // dé au pied
+      bsBox(face, 0.58, 0.1, 0.5, X(dFoot - 0.15), SIDEWALK_H + 1.15, zs + e * 0.05);
       bsSnowStrip(capA.clone().setY(capA.y + 0.15), capB.clone().setY(capB.y + 0.15), 0.28, 0.1);
       bsSnowStrip(capB.clone().setY(capB.y + 0.15), capC.clone().setY(capC.y + 0.15), 0.28, 0.1);
-      snowPad(X(AREA_W - 0.27), SIDEWALK_H + 1.2, zs + e * 0.05, 0.56, 0.48, 0.15);
+      snowPad(X(dFoot - 0.15), SIDEWALK_H + 1.2, zs + e * 0.05, 0.56, 0.48, 0.15);
+      rails.push([capA.clone().setY(capA.y + 0.1), capB.clone().setY(capB.y + 0.1)], [capB.clone().setY(capB.y + 0.1), capC.clone().setY(capC.y + 0.1)]);
     }
   }
-  // une fois sur trois, une lanterne sur le poteau du pied (perrons à rampe en fonte)
+  // lanterne sur le poteau du pied (rampes en fonte simples, une fois sur trois)
   if (sty.stoop === 'iron' && Math.random() < 0.35) {
     const zs = zd + (Math.random() < 0.5 ? -1 : 1) * (STOOP_W / 2 - 0.06), y = SIDEWALK_H + 1.62;
-    const gl = new THREE.SphereGeometry(0.15, 12, 10); gl.translate(X(AREA_W - 0.12), y, zs); bsGlobes.push(gl);
-    addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(X(AREA_W - 0.3), y, zs)), color: new THREE.Color(0xffc27a), intensity: 4, distance: 6 });
+    const gl = new THREE.SphereGeometry(0.15, 12, 10); gl.translate(X(front - 0.12), y, zs); bsGlobes.push(gl);
+    addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(X(front - 0.3), y, zs)), color: new THREE.Color(0xffc27a), intensity: 4, distance: 6 });
   }
-  RIGHT.doorZones.push({ side, z0: zd - STOOP_W / 2 - 0.4, z1: zd + STOOP_W / 2 + 0.4 });
-  addSubject({ label: 'Un perron de brownstone sous la neige', value: 0.7, box: RIGHT.box(boxAt(X(AREA_W / 2), zd, AREA_W / 2 + 0.1, STOOP_W / 2 + 0.25, SIDEWALK_H, PARLOR_Y + 3.4)) });
+  // urnes en fonte de part et d'autre de la porte, sur le palier (grands perrons)
+  if (sty.stoop === 'grand' || sty.stoop === 'pier') for (const e of [-1, 1]) {
+    const u = new THREE.LatheGeometry([[0, 0], [0.12, 0], [0.12, 0.05], [0.06, 0.1], [0.06, 0.2], [0.2, 0.32], [0.24, 0.5], [0.26, 0.55], [0, 0.55]].map(p => new THREE.Vector2(p[0], p[1])), 10);
+    u.translate(X(0.6), yP, zd + e * (STOOP_W / 2 - 0.3)); fenceGeoms.push(u);
+    snowPad(X(0.6), yP + 0.55, zd + e * (STOOP_W / 2 - 0.3), 0.46, 0.46, 0.16);
+  }
+  RIGHT.doorZones.push({ side, z0: zd - STOOP_W / 2 - 0.5, z1: zd + STOOP_W / 2 + 0.5 });
+  addSubject({ label: 'Un perron de brownstone sous la neige', value: 0.7, box: RIGHT.box(boxAt(X(AREA_W / 2), zd, AREA_W / 2 + 0.1, STOOP_W / 2 + 0.25, SIDEWALK_H, yP + 3.4)) });
+  return rails;
+}
+
+/** Porte en PLEIN CINTRE (photos de l'utilisateur) : baie cintrée creusée dans un encadrement de
+ *  grès (plaque percée, extrudée : l'intrados de l'arc se voit), double porte vernie ou noire vitrée
+ *  au fond, imposte en demi-cercle allumée au numéro doré, pilastres, entablement et fronton
+ *  (cintré ou droit) sur deux grandes consoles à volute, deux lanternes de part et d'autre. */
+function bsArchedDoor(side, fx, zd, yDoor, face, sty) {
+  const ox = -side, X = d => fx + ox * d, rotY = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+  const DW = 1.3, DH = 2.35, R = DW / 2, SW = DW + 0.9, SH = DH + R + 0.55;
+  const { hallGlassMat, brassMat } = entranceMats();
+  // encadrement percé de la baie (épaisseur de l'embrasure + 12 cm de saillie)
+  const sh = new THREE.Shape(); sh.moveTo(-SW / 2, 0); sh.lineTo(SW / 2, 0); sh.lineTo(SW / 2, SH); sh.lineTo(-SW / 2, SH); sh.lineTo(-SW / 2, 0);
+  const hole = new THREE.Path(); hole.moveTo(-R, 0); hole.lineTo(-R, DH + 0.06); hole.absarc(0, DH + 0.06, R, Math.PI, 0, true); hole.lineTo(R, 0); hole.lineTo(-R, 0);
+  sh.holes.push(hole);
+  const sg = new THREE.ExtrudeGeometry(sh, { depth: BS_REC + 0.12, bevelEnabled: false, curveSegments: 16 });
+  sg.rotateY(side < 0 ? Math.PI / 2 : -Math.PI / 2); sg.translate(X(-BS_REC), yDoor, zd); bsPlace(face, sg);
+  for (const e of [-1, 1]) bsBox(face, 0.1, SH, 0.26, X(0.17), yDoor + SH / 2, zd + e * (SW / 2 - 0.13));       // pilastres
+  // entablement, corniche, fronton ; grandes consoles à volute
+  bsBox(face, 0.2, 0.32, SW + 0.3, X(0.1), yDoor + SH + 0.16, zd);
+  bsBox(face, 0.52, 0.16, SW + 0.8, X(0.26), yDoor + SH + 0.4, zd);
+  for (const e of [-1, 1]) { const g = bsBracketGeo.clone(); g.scale(0.8, 1.15, 1.2); if (ox < 0) g.rotateY(Math.PI); g.translate(X(0.12), yDoor + SH - 0.6, zd + e * (SW / 2 + 0.12)); bsPlace(face, g); }
+  const half = (SW + 0.8) / 2, yb = yDoor + SH + 0.48, pts = [];
+  for (let k = 0; k <= 8; k++) { const t = -1 + k / 4; pts.push(new THREE.Vector3(X(0.24), sty.hood === 'pediment' ? yb + (1 - Math.abs(t)) * half * 0.36 : yb + Math.sqrt(Math.max(0, 1 - t * t * 0.9)) * 0.5, zd + t * half)); }
+  for (let k = 0; k < 8; k++) { const seg = []; bsStrut(seg, pts[k], pts[k + 1], 0.16); bsPlace(face, seg[0]); bsSnowStrip(pts[k].clone().setY(pts[k].y + 0.08), pts[k + 1].clone().setY(pts[k + 1].y + 0.08), 0.42, 0.09); }
+  snowPad(X(0.26), yDoor + SH + 0.48, zd, 0.52, SW + 0.76, 0.12);
+  // double porte au fond de l'embrasure, vitrée en haut (hall éclairé), grille en fer forgé une fois sur deux
+  const door = [], lit = [], brass = [], xd = X(-BS_REC + 0.03), grille = Math.random() < 0.5;
+  for (const e of [-1, 1]) {
+    const zc = zd + e * DW / 4, lw = DW / 2 - 0.02, leaf = new THREE.BoxGeometry(0.06, DH, lw);
+    if (side * e > 0) { const uv = leaf.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i)); }
+    leaf.translate(xd, yDoor + DH / 2, zc); door.push(leaf);
+    const gl = new THREE.PlaneGeometry(lw - 0.18, 1.25); gl.rotateY(rotY); gl.translate(X(-BS_REC + 0.065), yDoor + 1.5, zc); lit.push(gl);
+    if (grille) {
+      for (let k = 1; k < 5; k++) { const g = new THREE.BoxGeometry(0.014, 1.22, 0.014); g.translate(X(-BS_REC + 0.09), yDoor + 1.5, zc - (lw - 0.18) / 2 + k * (lw - 0.18) / 5); fenceGeoms.push(g); }
+      const ring = new THREE.TorusGeometry(0.09, 0.01, 6, 18); ring.rotateY(Math.PI / 2); ring.translate(X(-BS_REC + 0.09), yDoor + 1.5, zc); fenceGeoms.push(ring);
+    }
+    const knob = new THREE.SphereGeometry(0.03, 10, 8); knob.translate(X(-BS_REC + 0.11), yDoor + 1.05, zd + e * 0.1); brass.push(knob);
+  }
+  const bar = new THREE.BoxGeometry(0.08, 0.08, DW); bar.translate(X(-BS_REC + 0.04), yDoor + DH + 0.03, zd); stileUV(bar); door.push(bar);
+  const mid = new THREE.BoxGeometry(0.08, DH, 0.045); mid.translate(X(-BS_REC + 0.07), yDoor + DH / 2, zd); stileUV(mid); door.push(mid);
+  RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(door), doorMaterial())));
+  RIGHT.add(new THREE.Mesh(mergeGeometries(lit), hallGlassMat));
+  RIGHT.add(new THREE.Mesh(mergeGeometries(brass), brassMat));
+  // imposte en demi-cercle, numéro doré
+  const num = 2 * Math.floor(rnd(20, 160)) + (side > 0 ? 1 : 0);
+  const tr = new THREE.Mesh(new THREE.CircleGeometry(R - 0.03, 24, 0, Math.PI), new THREE.MeshBasicMaterial({ map: makeTransomTexture(num), color: hallGlassMat.color }));
+  tr.rotation.y = rotY; tr.position.set(X(-BS_REC + 0.02), yDoor + DH + 0.06, zd); RIGHT.add(tr);
+  // deux lanternes murales (globes) de part et d'autre de l'encadrement
+  for (const e of [-1, 1]) {
+    const zl = zd + e * (SW / 2 + 0.32), yl = yDoor + 2.05;
+    const arm = new THREE.BoxGeometry(0.22, 0.03, 0.03); arm.translate(X(0.11), yl + 0.18, zl); fenceGeoms.push(arm);
+    const gl = new THREE.SphereGeometry(0.11, 12, 10); gl.translate(X(0.22), yl, zl); bsGlobes.push(gl);
+    const cap = new THREE.ConeGeometry(0.1, 0.08, 8); cap.translate(X(0.22), yl + 0.14, zl); fenceGeoms.push(cap);
+  }
+  addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(X(0.9), yDoor + 2.0, zd)), color: new THREE.Color(0xffc27a), intensity: 6, distance: 7 });
+  addSubject({ label: `Une porte cintrée de brownstone, n° ${num}`, value: 0.65, glows: true, box: RIGHT.box(boxAt(X(0.25), zd, 0.3, SW / 2 + 0.5, yDoor - 0.1, yDoor + SH + 0.8)) });
+  return { SW, SH, yWreath: yDoor + 1.55, xWreath: X(-BS_REC + 0.1) };
+}
+
+/* Décorations de fêtes (photo de l'utilisateur) : guirlandes de sapin le long des rampes et de la
+   grille, piquées de petites ampoules chaudes (le bloom en fait des points lumineux), nœuds rouges,
+   couronne sur la porte et aux fenêtres du parlor floor. Une maison sur trois environ. */
+const bsGarlandMat = new THREE.MeshStandardMaterial({ color: 0x1b3220, roughness: 0.85 });
+const bsBulbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4.6, 3.3, 1.7) });
+let bsGarland = [], bsBulbs = [], bsBows = [];
+function bsFlushDecor() {
+  if (bsGarland.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsGarland), bsGarlandMat));
+  if (bsBulbs.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsBulbs), bsBulbMat));
+  if (bsBows.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsBows), paintMat(0x9a0d0d, 0.55, 0.05)));
+  bsGarland = []; bsBulbs = []; bsBows = [];
+}
+/** Guirlande entre a et b (légèrement tombante), ampoules en spirale autour. */
+function bsGarlandSeg(a, b, sag = 0.07) {
+  const m = a.clone().add(b).multiplyScalar(0.5); m.y -= sag;
+  const curve = new THREE.QuadraticBezierCurve3(a, m, b), len = a.distanceTo(b);
+  bsGarland.push(new THREE.TubeGeometry(curve, Math.max(4, Math.round(len / 0.12)), 0.08, 5, false));
+  const nb = Math.max(3, Math.round(len / 0.065));
+  for (let k = 0; k <= nb; k++) {
+    const p = curve.getPoint(k / nb), t = k * 2.4;
+    const g = new THREE.SphereGeometry(0.032, 5, 4); g.translate(p.x + Math.cos(t) * 0.065, p.y + Math.sin(t) * 0.065, p.z + Math.sin(t * 0.7) * 0.065); bsBulbs.push(g);
+  }
+}
+/** Nœud rouge (deux boucles et deux pans) en p, tourné vers la rue (face à ±x). */
+function bsBow(p) {
+  for (const e of [-1, 1]) {
+    const l = new THREE.SphereGeometry(0.075, 8, 6); l.scale(0.5, 0.75, 1); l.translate(p.x, p.y + 0.02, p.z + e * 0.07); bsBows.push(l);
+    const t = new THREE.BoxGeometry(0.03, 0.2, 0.045); t.rotateX(e * 0.3); t.translate(p.x, p.y - 0.1, p.z + e * 0.04); bsBows.push(t);
+  }
+}
+/** Couronne (repère de la rue) en (x, y, z), face à la rue. */
+function bsWreath(side, x, y, z, r = 0.3) {
+  const g = new THREE.TorusGeometry(r, 0.085, 6, 18); g.rotateY(Math.PI / 2); g.translate(x, y, z); bsGarland.push(g);
+  for (let k = 0; k < 22; k++) { const a = k / 22 * Math.PI * 2, s = new THREE.SphereGeometry(0.03, 5, 4); s.translate(x - side * 0.06, y + Math.sin(a) * r, z + Math.cos(a) * r); bsBulbs.push(s); }
+  bsBow(new THREE.Vector3(x - side * 0.08, y - r, z));
+}
+
+/** Habille une maison pour les fêtes : guirlandes sur les rampes du perron et en festons sur la grille,
+ *  nœuds rouges, couronnes sur la porte et aux fenêtres du parlor floor, une lueur chaude au pied. */
+function bsDecorate(side, X, zd, yP, rails, fences, wreath, winBays) {
+  for (const [a, b] of rails) bsGarlandSeg(a.clone().setY(a.y - 0.04), b.clone().setY(b.y - 0.04), 0.05);
+  rails.forEach(([a], i) => { if (i % 2 === 0) bsBow(a.clone().setY(a.y - 0.08)); });          // nœud au pied de chaque rampe
+  const xf = side * (FACADE_X + 0.15), yf = SIDEWALK_H + 1.38;
+  for (const [za, zb] of fences) {
+    if (zb - za < 0.6) continue;
+    const n = Math.max(1, Math.round((zb - za) / 1.2));
+    for (let k = 0; k < n; k++) {
+      const z0 = za + (zb - za) * k / n, z1 = za + (zb - za) * (k + 1) / n;
+      bsGarlandSeg(new THREE.Vector3(xf, yf, z0 + 0.05), new THREE.Vector3(xf, yf, z1 - 0.05), 0.16);
+      bsBow(new THREE.Vector3(xf - side * 0.05, yf + 0.02, z0 + 0.05));
+    }
+  }
+  bsWreath(side, wreath.x, wreath.y, zd, 0.3);
+  for (const zb of winBays) bsWreath(side, X(-BS_REC + 0.12), yP + 1.75, zb, 0.36);
+  addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(X(AREA_W * 0.6), yP + 0.6, zd)), color: new THREE.Color(0xffc890), intensity: 3.5, distance: 6 });
+  addSubject({ label: 'Un perron décoré pour les fêtes', value: 0.9, glows: true, box: RIGHT.box(boxAt(X(AREA_W / 2), zd, AREA_W / 2 + 0.2, 2.2, SIDEWALK_H, yP + 2.6)),
+    moment: () => ({ pts: 3, why: 'guirlandes allumées sous la neige' }) });
 }
 
 /** Grille de la cour anglaise : muret de grès, barreaux à pointe de lance, lisses, poteaux à boule. */
@@ -3875,7 +4064,7 @@ function bsPartition(side, z) {
 /** Une terrace : n maisons de largeur W à partir de z0 (côté side de la rue de droite). */
 function buildTerrace(side, z0, n, W, sty) {
   const ox = -side, fx = side * (FACADE_X + AREA_W), X = d => fx + ox * d;
-  const L = n * W, zc = z0 + L / 2, yP = PARLOR_Y, y2 = yP + PARLOR_H, yTop = y2 + sty.floors * UPPER_H;
+  const L = n * W, zc = z0 + L / 2, yP = stoopGeom(sty).yP, y2 = yP + PARLOR_H, yTop = y2 + sty.floors * UPPER_H;
   const snowStart = snowGeoms.length, face = [], base = [], holesF = [], holesB = [];
   const corn = bsCornice.get(sty.cornice) ?? []; bsCornice.set(sty.cornice, corn);
   const xB = X(-BS_REC);                                          // fond des embrasures
@@ -3891,7 +4080,7 @@ function buildTerrace(side, z0, n, W, sty) {
     bays.forEach((zb, b) => {
       // rez-de-jardin : fenêtres à moitié dans la neige de la cour, derrière une grille
       if (b !== doorBay) {
-        const w = 1.05, y0 = 0.42, y1 = 1.5;
+        const w = 1.05, y1 = Math.min(1.5, yP - 0.4), y0 = Math.min(0.42, y1 - 0.5);
         holesB.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.25, 0.45);
         for (let bz = -w / 2 + 0.06; bz < w / 2; bz += 0.11) { const g = new THREE.CylinderGeometry(0.011, 0.011, y1 - y0, 5); g.translate(X(0.04), (y0 + y1) / 2, zb + bz); fenceGeoms.push(g); }
         for (const hy of [y0 + 0.05, y1 - 0.05]) { const g = new THREE.BoxGeometry(0.02, 0.035, w + 0.04); g.translate(X(0.04), hy, zb); fenceGeoms.push(g); }
@@ -3905,6 +4094,7 @@ function buildTerrace(side, z0, n, W, sty) {
         const w = 1.1, y0 = y2 + j * UPPER_H + 0.75, y1 = y0 + (j === sty.floors - 1 ? 1.7 : 2.0);
         holesF.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.3, 0.45);
         bsSill(face, X, y0, zb, w);
+        if (sty.hood === 'segment') { bsParlorHood(face, X, y1, zb, w, 'segment'); continue; }   // frontons cintrés à tous les étages
         bsBox(face, 0.06, 0.12, w + 0.2, X(0.03), y1 + 0.06, zb);                                 // frise
         bsBox(face, 0.2, 0.16, w + 0.44, X(0.1), y1 + 0.2, zb);                                   // larmier
         for (const e of [-1, 1]) bsBox(face, 0.13, 0.26, 0.1, X(0.065), y1 + 0.02, zb + e * (w / 2 + 0.15));
@@ -3912,11 +4102,17 @@ function buildTerrace(side, z0, n, W, sty) {
       }
     });
     // porte du parlor floor : entrée complète (encadrement en grès, lanterne loin du voisin)
-    buildEntrance(side, zd, yP, { faceX: fx, trim: face, lanternSide: doorEnd ? -1 : 1 });
-    bsStoop(side, fx, zd, sty, face);
+    let wreath = { y: yP + 1.55, x: X(0.12) };
+    if (sty.door === 'arch') {
+      const d = bsArchedDoor(side, fx, zd, yP, face, sty);
+      holesF.push({ z0: zd - d.SW / 2, z1: zd + d.SW / 2, y0: yP, y1: yP + d.SH });
+      wreath = { y: d.yWreath, x: d.xWreath };
+    } else buildEntrance(side, zd, yP, { faceX: fx, trim: face, lanternSide: doorEnd ? -1 : 1 });
+    const rails = bsStoop(side, fx, zd, sty, face, doorEnd ? 1 : -1);
     // grille de la cour : interrompue au pied du perron ; séparations entre cours (sauf entre perrons appariés)
     const s0 = zd - STOOP_W / 2 - 0.02, s1 = zd + STOOP_W / 2 + 0.02;
     bsFence(side, za, s0); bsFence(side, s1, za + W);
+    if (Math.random() < 0.33) bsDecorate(side, X, zd, yP, rails, [[za, s0], [s1, za + W]], wreath, bays.filter((_, b) => b !== doorBay));
     if (!doorEnd || i === 0) bsPartition(side, za + 0.02);
     if (i === n - 1) bsPartition(side, za + W - 0.02);
     // cheminée sur le mur mitoyen
