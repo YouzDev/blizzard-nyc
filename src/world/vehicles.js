@@ -7,7 +7,7 @@ import { addSubject } from '../game/subjects.js';
 import { shadowed } from './collisions.js';
 import { deliZ } from './buildings.js';
 import { addContactShadowIn } from './contactShadows.js';
-import { MAIN, LEFT } from './street.js';
+import { MAIN, LEFT, RIGHT } from './street.js';
 import { grimeTex } from '../textures/index.js';
 import { makeAmbulanceLivery, makeTruckLivery, makeIceCreamLivery, makeVanLivery } from '../textures/liveries.js';
 
@@ -569,6 +569,16 @@ const CAR_COLORS = [0x1b232e, 0x2c2320, 0x353a41, 0x1f2a33, 0x101215, 0x4a1f1b, 
     const depth = 0.8 + Math.random() * 0.5, sp = specialAt.get(i);
     if (sp) buildSpecialVehicle(sp, side * (ROAD_HALF - 1.35), z, side < 0 ? 0 : Math.PI, depth); else park(side, z, depth);
   });
+}
+
+// Rue de droite (brownstones) : voitures garées des deux côtés, avec des trous ; rien devant le parc
+{
+  let ci = 5;
+  const kinds = ['sedan', 'hatch', 'suv', 'sedan', 'sedan', 'suv', 'hatch', 'sedan'];
+  for (const [side, z] of [...[-66, -51, -36, -20].map(z => [-1, z]), ...[-69, -55, -41, -28].map(z => [1, z])]) {
+    if (Math.random() < 0.2) continue;
+    buildParkedCar(side * (ROAD_HALF - 1.3), z, (side < 0 ? 0 : Math.PI) + side * 0.01 * ((ci % 3) - 1), CAR_COLORS[ci % CAR_COLORS.length], 0.8 + Math.random() * 0.5, kinds[ci % kinds.length], RIGHT); ci++;
+  }
 }
 
 // Rue de gauche : voitures garées des deux côtés et un taxi, avec des trous ; rien dans le

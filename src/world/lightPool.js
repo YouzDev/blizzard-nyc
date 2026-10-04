@@ -200,6 +200,14 @@ function followMoon(camera, dt) {
   moon.shadow.needsUpdate = true; renderer.shadowMap.needsUpdate = true; lightPool.stats.moonMoves++;
 }
 
+/** Des objets viennent d'apparaître ou de disparaître en nombre (masquage des rues, street.js) :
+ *  les cartes d'ombre calculées pendant qu'ils étaient masqués n'ont pas leurs ombres — on refait
+ *  celles des projecteurs en service et celle de la lune, une fois. */
+export function refreshPoolShadows() {
+  for (const sl of shadowSlots) if (sl.src) poolShadowRender(sl);
+  moon.shadow.needsUpdate = true; renderer.shadowMap.needsUpdate = true;
+}
+
 /** À chaque image, APRÈS le scintillement des lampes (main.js) et avant le rendu. */
 export function updateLightPool(dt, camera) {
   assignTimer += dt;

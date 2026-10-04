@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { ROAD_HALF, FACADE_X, STREET_Z_MAX, CROSS_Z, LEFT_END_X } from '../core/constants.js';
+import { ROAD_HALF, FACADE_X, STREET_Z_MAX, CROSS_Z, LEFT_END_X, RIGHT_END_X } from '../core/constants.js';
 import { scene } from '../core/scene.js';
 import { contactBlobTex, contactEdgeTex } from '../textures/index.js';
 import { groundY } from './ground.js';
-import { MAIN, LEFT } from './street.js';
+import { MAIN, LEFT, RIGHT } from './street.js';
+import { BS_ROW_END } from './brownstones.js';
 
 /* =====================================================================
    6 ter. OMBRES DE CONTACT
@@ -72,9 +73,11 @@ function band(st, cx, w, z0, z1, segZ, flip, opacity) {
   const NEAR = CROSS_Z + FACADE_X, FAR = CROSS_Z - FACADE_X, CURB_N = CROSS_Z + ROAD_HALF;
   for (const [st, s, z0, z1, r0, r1] of [
     [MAIN, -1, NEAR, STREET_Z_MAX + 12, CURB_N + 4, STREET_Z_MAX + 10],
-    [MAIN, 1, FAR, STREET_Z_MAX + 12, CURB_N + 2, STREET_Z_MAX + 10],
+    [MAIN, 1, NEAR, STREET_Z_MAX + 12, CURB_N + 2, STREET_Z_MAX + 10],
     [LEFT, -1, LEFT_END_X, -FACADE_X, LEFT_END_X + 2, -FACADE_X - 1],
     [LEFT, 1, LEFT_END_X, FACADE_X, LEFT_END_X + 2, ROAD_HALF - 3],
+    [RIGHT, -1, BS_ROW_END, -FACADE_X, -RIGHT_END_X + 2, -ROAD_HALF - 3],
+    [RIGHT, 1, BS_ROW_END, -FACADE_X, -RIGHT_END_X + 2, -FACADE_X - 1],
   ]) {
     band(st, s * (FACADE_X - w / 2), w, z0, z1, Math.round((z1 - z0) / 0.42), s > 0, 0.55);
     band(st, s * (ROAD_HALF - 0.35 - cw / 2), cw, r0, r1, Math.round((r1 - r0) / 0.62), s < 0, 0.34);

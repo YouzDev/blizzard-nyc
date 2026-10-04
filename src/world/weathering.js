@@ -38,7 +38,9 @@ import { usePhoto, loadPhotoSet, photoMean } from '../textures/photo.js';
  *  ce repère (façades à x = ±FACADE_X, grille des lampadaires le long de z), donc il vaut
  *  aussi pour une rue tournée ; par défaut celui du monde (rue principale).
  *  `warm` : part du rebond chaud des lampadaires (0 sur une façade sans lampadaires devant :
- *  la grille analytique en inventerait). Uniformes, pas texte du shader : un seul programme. */
+ *  la grille analytique en inventerait). `faceX` : plan des façades dans ce repère (±FACADE_X par
+ *  défaut ; brownstones : reculées de AREA_W derrière leur cour). Uniformes, pas texte du shader :
+ *  un seul programme. */
 export function weather(mat, p = {}) {
   const u = {
     uGrime: { value: grimeTex },
@@ -49,6 +51,7 @@ export function weather(mat, p = {}) {
     uStrength: { value: p.strength ?? 1 },
     uEscZ: { value: p.escZ ?? 0 }, uEscW: { value: p.escW ?? 0 }, uEscY0: { value: p.escY0 ?? 0 }, uEscN: { value: p.escN ?? 0 },
     uFrame: { value: p.frame ?? new THREE.Vector4(1, 0, 0, 0) }, uWarm: { value: p.warm ?? 1 },
+    uFaceX: { value: p.faceX ?? FACADE_X },          // plan des façades de la rue (brownstones : reculées derrière leur cour)
   };
   mat.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, u, snowBounce);
@@ -67,7 +70,7 @@ export function weather(mat, p = {}) {
       .replace('#include <common>', `#include <common>
         varying vec3 vWPos; varying vec3 vWNrm;
         uniform sampler2D uGrime;
-        uniform float uTop, uWin, uZ0, uPitch, uCols, uY0, uFloorH, uRows, uWinW, uStrength, uEscZ, uEscW, uEscY0, uEscN, uWarm;
+        uniform float uTop, uWin, uZ0, uPitch, uCols, uY0, uFloorH, uRows, uWinW, uStrength, uEscZ, uEscW, uEscY0, uEscN, uWarm, uFaceX;
         uniform vec3 uBounceWarm, uBounceCool;`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         {
@@ -79,7 +82,7 @@ export function weather(mat, p = {}) {
           float z0B = ${LAMP_Z0.toFixed(2)} + (sideB > 0.0 ? ${(LAMP_PITCH / 2).toFixed(2)} : 0.0);
           float dzB = vWPos.z - z0B - ${LAMP_PITCH.toFixed(2)} * floor((vWPos.z - z0B) / ${LAMP_PITCH.toFixed(2)} + 0.5);
           // distance à la façade : le rebond concerne les murs de rue, pas l'intérieur des îlots
-          float nearB = 1.0 - smoothstep(1.5, 4.0, abs(abs(vWPos.x) - ${FACADE_X.toFixed(2)}));
+          float nearB = 1.0 - smoothstep(1.5, 4.0, abs(abs(vWPos.x) - uFaceX));
           float warmB = exp(-dzB * dzB / 24.0) / (1.0 + yB * yB / 14.0);
           float coolB = exp(-yB / 9.0);
           reflectedLight.indirectDiffuse += diffuseColor.rgb * faceB * nearB * (uBounceWarm * warmB * uWarm + uBounceCool * coolB);

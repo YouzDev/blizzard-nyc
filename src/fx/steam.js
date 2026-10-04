@@ -68,12 +68,17 @@ function buildManhole(x, z) {
   const tint = new THREE.Color(0.62, 0.66, 0.72);
   if (best) tint.lerp(best.col, THREE.MathUtils.clamp(1 - bd / 16, 0, 0.55));
 
-  // panache : bouffées réparties dans un petit disque, phases étalées
-  const N = 110, pos = new Float32Array(N * 3), phase = new Float32Array(N), seed = new Float32Array(N), size = new Float32Array(N);
+  buildPlume(x, 0.07, z, tint);
+}
+
+/** Panache de bouffées (vapeur d'égout, fumée de cheminée) : réparties dans un petit disque, phases
+ *  étalées, toute l'animation dans le shader. o : n, spread, height, size, opacity. */
+export function buildPlume(x, y, z, tint, o = {}) {
+  const N = o.n ?? 110, pos = new Float32Array(N * 3), phase = new Float32Array(N), seed = new Float32Array(N), size = new Float32Array(N), sp = o.spread ?? 0.3, sk = o.size ?? 1;
   for (let i = 0; i < N; i++) {
-    const a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * 0.3;
-    pos[i * 3] = x + Math.cos(a) * r; pos[i * 3 + 1] = 0.07; pos[i * 3 + 2] = z + Math.sin(a) * r;
-    phase[i] = i / N; seed[i] = Math.random(); size[i] = 0.55 + Math.random() * 0.5;
+    const a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * sp;
+    pos[i * 3] = x + Math.cos(a) * r; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z + Math.sin(a) * r;
+    phase[i] = i / N; seed[i] = Math.random(); size[i] = (0.55 + Math.random() * 0.5) * sk;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -83,8 +88,8 @@ function buildManhole(x, z) {
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       uMap: { value: puffTex }, uTime: { value: Math.random() * 100 }, uPixelRatio: { value: renderer.getPixelRatio() }, uScale: { value: 1 },
-      uFogColor: { value: FOG_COLOR }, uFogDensity: { value: FOG_DENSITY }, uWind: { value: WIND }, uHeight: { value: 3.2 + Math.random() * 1.2 },
-      uColor: { value: tint }, uOpacity: { value: 0.42 },
+      uFogColor: { value: FOG_COLOR }, uFogDensity: { value: FOG_DENSITY }, uWind: { value: WIND }, uHeight: { value: o.height ?? 3.2 + Math.random() * 1.2 },
+      uColor: { value: tint }, uOpacity: { value: o.opacity ?? 0.42 },
     },
     vertexShader: STEAM_VERT, fragmentShader: STEAM_FRAG, transparent: true, depthWrite: false,
   });

@@ -20,7 +20,7 @@ import { MAIN, LEFT, LEFT_END, LEFT_CHUNKS } from './street.js';
    6. BÂTIMENTS : soubassement en pierre, briques, fenêtres, climatiseurs,
       escaliers de secours, perrons grillagés, châteaux d'eau
    ===================================================================== */
-const WIN_W = 1.3, WIN_H = 1.9, FLOOR_H = 3.2, RECESS = 0.24, BASE_H = 4.4;
+export const WIN_W = 1.3, WIN_H = 1.9, FLOOR_H = 3.2, RECESS = 0.24, BASE_H = 4.4;
 // Cadre de fenêtre : montants, traverses, meneau, imposte (fusionnés) — instancié
 const winFrameGeo = (() => {
   const g = [], t = 0.07, d = 0.09;
@@ -34,11 +34,12 @@ const winGlassGeo = new THREE.PlaneGeometry(WIN_W - 0.1, WIN_H - 0.1);
 // Accumulateurs de la rue EN CONSTRUCTION (ST) : remis à zéro par beginStreet, fusionnés et
 // ajoutés au groupe de la rue par endStreet. Tout le code des immeubles travaille dans le repère
 // de ST ; ce qui doit sortir en coordonnées monde passe par ses méthodes (collider, box, toWorld).
-let ST = null;
-let frameInst, litInst, darkInst, shadeInst, escGeoms, fenceGeoms, concGeoms, snowGeoms, basementGlass, plinthGeoms;
+// (exportés, liaisons vivantes : les brownstones de la rue de droite, world/brownstones.js, s'en servent aussi)
+export let ST = null;
+export let frameInst, litInst, darkInst, shadeInst, escGeoms, fenceGeoms, concGeoms, snowGeoms, basementGlass, plinthGeoms;
 
 /** Boîte avec UV à l'échelle du monde (texture de 5,5 m), translatée. */
-function worldBox(list, w, h, d, x, y, z, scaleU = 5.5) {
+export function worldBox(list, w, h, d, x, y, z, scaleU = 5.5) {
   const g = new THREE.BoxGeometry(w, h, d);
   const uv = g.attributes.uv; const su = Math.max(d, w) / scaleU, sv = h / scaleU;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
@@ -55,7 +56,7 @@ function worldBox(list, w, h, d, x, y, z, scaleU = 5.5) {
  *  `rotZ` incline la nappe autour de son point d'appui (stores) ; `step` = pas des
  *  sommets le long de la longueur (0,18 m suffit pour le bruit ; grossier sur les toits) ;
  *  `rotY` = π/2 couche la longueur le long de X (rebords d'une façade tournée vers ±Z). */
-function snowPad(cx, baseY, cz, sx, sz, h, rotZ = 0, step = 0.18, rotY = 0) {
+export function snowPad(cx, baseY, cz, sx, sz, h, rotZ = 0, step = 0.18, rotY = 0) {
   const nx = Math.min(8, Math.max(4, Math.round(sx / 0.07)));
   const nz = Math.min(120, Math.max(4, Math.round(sz / step)));
   const g = new THREE.PlaneGeometry(sx, sz, nx, nz); g.rotateX(-Math.PI / 2);
@@ -82,7 +83,7 @@ function snowPad(cx, baseY, cz, sx, sz, h, rotZ = 0, step = 0.18, rotY = 0) {
  *  Double face : les coussins des plateformes d'escalier de secours se voient par en
  *  dessous, à travers la grille. */
 const snowPadMat = snowPhoto(MAT.snow.clone()); snowPadMat.side = THREE.DoubleSide;   // clone() ne recopie pas onBeforeCompile
-function flushSnowPads(from) {
+export function flushSnowPads(from) {
   const list = snowGeoms.splice(from);
   if (!list.length) return;
   const m = new THREE.Mesh(mergeGeometries(list), snowPadMat); m.receiveShadow = true; ST.add(m);
@@ -317,12 +318,12 @@ function buildEndFacade(side, eF, z0, depthZ, height, rows, yb, yt, brickGeoms) 
    quand c'est fermé, store à lambrequin, neige sur tout ce qui dépasse.
    Toutes les pièces d'huisserie d'un commerce sont fusionnées en un seul mesh.
    --------------------------------------------------------------------- */
-const PHOTO_WHITE = new THREE.Color(1, 1, 1);
+export const PHOTO_WHITE = new THREE.Color(1, 1, 1);
 const DOOR_COLORS = [0x2b1a12, 0x14301c, 0x3a1410, 0x101418, 0x1e2a44];
 const SHOP_FRAME_COLORS = [0x0f1216, 0x14301c, 0x3a1410, 0x14203a, 0x2a2622];
 const AWNING_COLORS = [0x7a2418, 0x1e4a2c, 0x262a34, 0x24407a, 0x8a5a18];
 const shopMatCache = new Map();
-function paintMat(color, roughness = 0.5, metalness = 0.25) {
+export function paintMat(color, roughness = 0.5, metalness = 0.25) {
   const k = `${color}/${roughness}/${metalness}`;
   if (!shopMatCache.has(k)) shopMatCache.set(k, new THREE.MeshStandardMaterial({ color, roughness, metalness }));
   return shopMatCache.get(k);
@@ -333,7 +334,7 @@ const shopInteriorCache = new Map();
  *  autres les lames claires écaillées, MULTIPLIÉES par la couleur du matériau —
  *  vert, bordeaux, bleu marine… restent, avec le grain des lames et les écaillures.
  *  ru / rv : répétition (tuile de 1,6 m, lames verticales). */
-function paintedWood(mat, ru, rv) {
+export function paintedWood(mat, ru, rv) {
   if (mat.userData.woodPhoto) return;
   mat.userData.woodPhoto = true;
   const dark = mat.color.getHSL({ h: 0, s: 0, l: 0 }).l < 0.07 && mat.color.getHSL({ h: 0, s: 0, l: 0 }).s < 0.3;
@@ -618,18 +619,22 @@ function stileUV(g) { const uv = g.attributes.uv; for (let i = 0; i < uv.count; 
 /** Entrée de perron : encadrement de pierre (piédroits, corniche sur consoles), imposte
  *  éclairée au numéro doré, double porte à panneaux moulurés (texture de vantail entière,
  *  relief en normal map), vitres de hall dépolies derrière une grille en fer forgé,
- *  quincaillerie en laiton, chambranle et battement central, lanterne murale. */
-function buildEntrance(side, z, yDoor) {
-  const faceX = side * FACADE_X, ox = -side, X = d => faceX + ox * d, rotY = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+ *  quincaillerie en laiton, chambranle et battement central, lanterne murale.
+ *  `o.faceX` : plan de la façade (brownstones : reculé derrière la cour) ; `o.trim` : liste où
+ *  verser l'encadrement de pierre (par défaut la pierre reconstituée claire ; brownstones : leur grès) ;
+ *  `o.lanternSide` : côté de la lanterne murale le long de la façade (±1, +1 par défaut). */
+export function buildEntrance(side, z, yDoor, o = {}) {
+  const faceX = o.faceX ?? side * FACADE_X, ox = -side, X = d => faceX + ox * d, rotY = side < 0 ? Math.PI / 2 : -Math.PI / 2;
+  const trim = o.trim ?? concGeoms;
   const DW = 1.3, DH = 2.35, frame = [], door = [], lit = [];
   const box = (list, sx, sy, sz, x, y, zz) => { const g = new THREE.BoxGeometry(sx, sy, sz); g.translate(x, y, zz); list.push(g); };
   // encadrement : l'embrasure paraît profonde parce que la pierre avance tout autour
   for (const e of [-1, 1]) {
-    worldBox(concGeoms, 0.26, DH + 0.7, 0.3, X(0.13), yDoor + (DH + 0.7) / 2, z + e * (DW / 2 + 0.15));     // piédroits
-    worldBox(concGeoms, 0.34, 0.26, 0.2, X(0.2), yDoor + DH + 0.72, z + e * (DW / 2 + 0.2));                 // consoles
+    worldBox(trim, 0.26, DH + 0.7, 0.3, X(0.13), yDoor + (DH + 0.7) / 2, z + e * (DW / 2 + 0.15));     // piédroits
+    worldBox(trim, 0.34, 0.26, 0.2, X(0.2), yDoor + DH + 0.72, z + e * (DW / 2 + 0.2));                 // consoles
   }
-  worldBox(concGeoms, 0.28, 0.14, DW + 0.6, X(0.14), yDoor + DH + 0.62, z);                                    // linteau
-  worldBox(concGeoms, 0.42, 0.14, DW + 1.0, X(0.21), yDoor + DH + 0.92, z);                                    // corniche
+  worldBox(trim, 0.28, 0.14, DW + 0.6, X(0.14), yDoor + DH + 0.62, z);                                    // linteau
+  worldBox(trim, 0.42, 0.14, DW + 1.0, X(0.21), yDoor + DH + 0.92, z);                                    // corniche
   snowPad(X(0.21), yDoor + DH + 0.99, z, 0.42, DW + 0.96, 0.14);
   if (!hallGlassMat) {
     hallGlassMat = new THREE.MeshBasicMaterial({ map: makeHallGlassTexture(), color: new THREE.Color(0.78, 0.62, 0.46) });   // hall éclairé derrière le verre dépoli
@@ -668,7 +673,7 @@ function buildEntrance(side, z, yDoor) {
   ST.add(new THREE.Mesh(mergeGeometries(lit), hallGlassMat));
   ST.add(new THREE.Mesh(mergeGeometries(brass), brassMat));
   // lanterne murale sur potence, à côté de la porte
-  const lz = z + (DW / 2 + 0.55), ly = yDoor + DH + 0.25;
+  const lz = z + (o.lanternSide ?? 1) * (DW / 2 + 0.55), ly = yDoor + DH + 0.25;   // côté de la lanterne : loin du voisin (perrons appariés)
   const arm = new THREE.BoxGeometry(0.28, 0.03, 0.03); arm.translate(X(0.14), ly + 0.25, lz); fenceGeoms.push(arm);
   const cage = new THREE.CylinderGeometry(0.09, 0.07, 0.3, 6, 1, true); cage.translate(X(0.28), ly + 0.05, lz); fenceGeoms.push(cage);
   const cap = new THREE.ConeGeometry(0.12, 0.1, 6); cap.translate(X(0.28), ly + 0.25, lz); fenceGeoms.push(cap);
@@ -676,7 +681,7 @@ function buildEntrance(side, z, yDoor) {
   bulb.position.set(X(0.28), ly + 0.05, lz); ST.add(bulb);
   // la lumière part d'entre la lanterne et la porte, un peu devant : posée à la lanterne, elle
   // arrivait en rasant sur les vantaux au fond de l'embrasure et la porte restait noire
-  addPointSource({ pos: ST.toWorld(new THREE.Vector3(X(0.85), yDoor + DH - 0.1, z + 0.45)), color: new THREE.Color(0xffc27a), intensity: 5, distance: 6 });
+  addPointSource({ pos: ST.toWorld(new THREE.Vector3(X(0.85), yDoor + DH - 0.1, z + (o.lanternSide ?? 1) * 0.45)), color: new THREE.Color(0xffc27a), intensity: 5, distance: 6 });
 }
 
 /** Perron de brownstone + clôture en fer forgé (comme la zone grillagée de l'image). */
@@ -804,7 +809,7 @@ export function doorGap(st, side, z) {
 
 /** `chunks` : limites de tronçons (z de la rue) ; les fusions sont faites tronçon par tronçon et
  *  rangée par rangée (voir LEFT_CHUNKS, street.js) — sans limites, une seule fusion pour la rue. */
-function beginStreet(st, warm = 1, chunks = []) {
+export function beginStreet(st, warm = 1, chunks = []) {
   ST = st; ST.warm = warm; ST.chunks = chunks;
   resetAccumulators();
 }
@@ -852,7 +857,7 @@ function buildRow(side, zFrom, zTo, pShop, opt = () => ({})) {
 
 /** Fusionne et pose tout ce qui a été accumulé (fenêtres instanciées, pierre, fonte, neige) puis
  *  repart de zéro : appelé à chaque limite de tronçon et en fin de rue. */
-function flushChunk() {
+export function flushChunk() {
   if (!frameInst.length && !concGeoms.length && !escGeoms.length && !fenceGeoms.length) { resetAccumulators(); return; }
   // Instanciation des fenêtres : cadres, vitres éteintes, trois types d'intérieurs allumés (nu / rideaux / stores)
   const frames = new THREE.InstancedMesh(winFrameGeo, MAT.paint, frameInst.length);
@@ -884,7 +889,7 @@ function flushChunk() {
   if (plinthGeoms.length) { const pm = weather(MAT.granite.clone(), { strength: 0.8, frame: ST.frame, warm: ST.warm }); usePhoto(pm, 'concrete_wall_008', 5.5 / 2.7, 5.5 / 2.7); ST.add(shadowed(new THREE.Mesh(mergeGeometries(plinthGeoms), pm))); }
   resetAccumulators();
 }
-function endStreet() { flushChunk(); ST = null; }
+export function endStreet() { flushChunk(); ST = null; }
 
 // Matériaux partagés par toutes les rues : vitres à store / rideaux, intérieurs allumés, fonte des escaliers
 const shadeMats = winDarkTex.map(map => new THREE.MeshStandardMaterial({ map, roughness: 0.3, metalness: 0, envMapIntensity: 1.4 }));
@@ -898,13 +903,14 @@ usePhoto(escapeMat, 'rust_coarse_01', 1, 1, m => { m.map = lampPaint.map; m.norm
 
 /* Rue principale. Côté gauche (celui que le joueur longe, celui du deli) : enfilade de
    devantures comme sur la référence. Côté droit : plus résidentiel, ce qui laisse la place aux
-   perrons et aux voitures garées. À gauche, la rangée s'arrête au coin de la rue de gauche
-   (façade de la transversale, z = CROSS_Z + FACADE_X) : l'immeuble d'angle a une 2e façade
-   tournée vers elle, et pas de boutique (son rez-de-chaussée d'habitation fait le tour du
-   coin). À droite, la rangée descend jusqu'à la façade d'en face de la transversale. */
+   perrons et aux voitures garées. Les deux rangées s'arrêtent aux coins des rues de gauche et de
+   droite (façade de la transversale, z = CROSS_Z + FACADE_X) : chaque immeuble d'angle a une 2e
+   façade tournée vers la rue d'à côté, et pas de boutique (son rez-de-chaussée d'habitation fait
+   le tour du coin). */
 beginStreet(MAIN);
-buildRow(-1, CROSS_Z + FACADE_X, STREET_Z_MAX + 12, 0.62, z => (z < CROSS_Z + FACADE_X + 1 ? { endFacade: -1, storefront: false, stoop: false } : {}));
-buildRow(1, CROSS_Z - FACADE_X, STREET_Z_MAX + 12, 0.24);
+const cornerOpt = z => (z < CROSS_Z + FACADE_X + 1 ? { endFacade: -1, storefront: false, stoop: false } : {});
+buildRow(-1, CROSS_Z + FACADE_X, STREET_Z_MAX + 12, 0.62, cornerOpt);
+buildRow(1, CROSS_Z + FACADE_X, STREET_Z_MAX + 12, 0.24, cornerOpt);
 if (deliZ === null) deliZ = -14;
 endStreet();
 

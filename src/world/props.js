@@ -10,7 +10,8 @@ import { flickerLights, lampPositions, addPointSource, addSpotSource } from './l
 import { addContactShadowIn } from './contactShadows.js';
 import { doorGap } from './buildings.js';
 import { addSubject, boxAt } from '../game/subjects.js';
-import { MAIN, LEFT, LEFT_END } from './street.js';
+import { MAIN, LEFT, LEFT_END, RIGHT } from './street.js';
+import { brownHouses, BS_ROW_END } from './brownstones.js';
 
 /* =====================================================================
    7. LAMPADAIRES ORNEMENTAUX, POUBELLES, BOUCHES D'INCENDIE, CONGÈRES
@@ -122,7 +123,7 @@ function placed(geo, x, y, z, rx = 0, ry = 0, rz = 0) {
   return g;
 }
 
-function buildLamppost(st, x, z, side) {
+export function buildLamppost(st, x, z, side) {
   const g = new THREE.Group(), metal = [], snow = [];
   // socle tourné (profil ornemental)
   const profile = [[0, 0], [0.36, 0], [0.36, 0.12], [0.3, 0.18], [0.3, 0.4], [0.22, 0.5], [0.2, 0.9], [0.24, 1.0], [0.16, 1.1], [0.1, 1.2]].map(p => new THREE.Vector2(p[0], p[1]));
@@ -266,7 +267,7 @@ function buildHydrant(st, x, z) {
   buildDrift(st, x, SIDEWALK_H, z, 0.55, 0.55);
 }
 
-function buildDrift(st, x, y, z, sx, sz, sy = rnd(0.28, 0.55)) {
+export function buildDrift(st, x, y, z, sx, sz, sy = rnd(0.28, 0.55)) {
   // congère bosselée (une demi-sphère lisse faisait oreiller), profil qui s'étale au pied
   const g = new THREE.SphereGeometry(1, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), p = g.attributes.position, seed = Math.random() * 50;
   for (let i = 0; i < p.count; i++) {
@@ -313,7 +314,7 @@ const hydrantsEvery = (z0, z1, offset) => { const out = []; for (let z = z0 + of
 // longe la rangée jusqu'au trottoir d'en face de la transversale.
 furnishStreet(MAIN, [
   { lamps: [STREET_Z_MIN, STREET_Z_MAX], wall: [CROSS_Z + FACADE_X, STREET_Z_MAX], hydrants: hydrantsEvery(STREET_Z_MIN, STREET_Z_MAX, 12) },
-  { lamps: [STREET_Z_MIN, STREET_Z_MAX + LAMP_PITCH / 2], wall: [CROSS_Z - FACADE_X + 0.5, STREET_Z_MAX], hydrants: hydrantsEvery(STREET_Z_MIN, STREET_Z_MAX, 25) },
+  { lamps: [STREET_Z_MIN, STREET_Z_MAX + LAMP_PITCH / 2], wall: [CROSS_Z + FACADE_X, STREET_Z_MAX], hydrants: hydrantsEvery(STREET_Z_MIN, STREET_Z_MAX, 25) },
 ]);
 // Rue de gauche : rien dans le carrefour ; côté feux jusqu'à l'angle de l'immeuble du coin, en
 // face jusqu'au fond du T.
@@ -321,6 +322,17 @@ furnishStreet(LEFT, [
   { lamps: [LEFT_END_X + 3, -FACADE_X - 2], wall: [LEFT_END_X + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(LEFT_END_X, -FACADE_X - 4, 12) },
   { lamps: [LEFT_END_X + 3, ROAD_HALF - 2], wall: [LEFT_END_X + 0.5, FACADE_X - 0.5], hydrants: hydrantsEvery(LEFT_END_X, ROAD_HALF - 4, 25) },
 ]);
+// Rue de droite (brownstones) : le long des grilles des cours, rien dans le carrefour ni devant le parc.
+furnishStreet(RIGHT, [
+  { lamps: [BS_ROW_END + 2, -FACADE_X - 2], wall: [BS_ROW_END + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 7) },
+  { lamps: [BS_ROW_END + 2, -FACADE_X - 2], wall: [BS_ROW_END + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 19) },
+]);
+// Poubelles rangées dans les cours anglaises, derrière la grille (une maison sur deux)
+for (const h of brownHouses) {
+  if (Math.random() < 0.5 || h.free[1] - h.free[0] < 0.9) continue;
+  const n = 1 + (Math.random() < 0.5 ? 1 : 0), z = rnd(h.free[0], h.free[1] - 0.85 * (n - 1));
+  for (let k = 0; k < n; k++) buildTrashCan(RIGHT, h.side * (FACADE_X + 0.75), z + k * 0.85, Math.random() * 6);
+}
 // Fond de l'impasse : la neige que les chasse-neige ont poussée contre les façades, une
 // longue congère d'un trottoir à l'autre (la chaussée arrive au pied des immeubles).
 for (let lx = -FACADE_X + 0.6; lx < FACADE_X - 0.4; lx += rnd(1.3, 2.1)) {

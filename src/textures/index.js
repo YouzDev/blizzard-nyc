@@ -1,5 +1,6 @@
 import { makeBrickTextures } from './brick.js';
 import { makeStoneTextures } from './stone.js';
+import { makeBrownstoneTextures } from './brownstone.js';
 import { makeSnowTextures } from './snow.js';
 import { makeFlakeTexture } from './flake.js';
 import { makeGratingTexture } from './grating.js';
@@ -18,6 +19,7 @@ import { makeLamppostTextures, makeGlowTexture } from './lamppost.js';
 
 export const brick   = makeBrickTextures();
 export const stone   = makeStoneTextures();
+export const brownstone = makeBrownstoneTextures();
 export const snowWalk= makeSnowTextures(false);
 export const snowRoad= makeSnowTextures(true);
 export const flakeTex= makeFlakeTexture();

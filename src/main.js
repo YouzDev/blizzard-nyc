@@ -10,13 +10,15 @@ import './core/environment.js';
 // Modules de décor : importés pour leurs effets de bord, dans l'ordre de construction.
 import './world/ground.js';
 import './world/buildings.js';
+import './world/brownstones.js';
 import './world/props.js';
 import { updateVehicles } from './world/vehicles.js';
 import { neonMat, neonZ } from './world/neon.js';
 import './world/ambience.js';
 import { updateTrafficLights } from './world/intersection.js';
+import './world/park.js';
 import { flickerLights } from './world/lightRegistry.js';
-import { initLightPool, updateLightPool, lightPool } from './world/lightPool.js';
+import { initLightPool, updateLightPool, lightPool, refreshPoolShadows } from './world/lightPool.js';
 import { updateStreetVisibility, streetZones } from './world/street.js';
 
 import { WIND, snowFar, snowMid, updateSnow, updateLampUniforms } from './fx/snow.js';
@@ -50,6 +52,8 @@ import { prepareScene, startup } from './core/preload.js';
 // Vraies lumières en nombre fixe, confiées aux sources les plus proches du joueur (après
 // la construction de la rue et le point de vue forcé, avant toute compilation de shader)
 initLightPool(camera);
+// des objets réapparaissent quand on change de rue (masquage) : leurs ombres sont recalculées
+streetZones.onChange = refreshPoolShadows;
 
 // Matrices FIGÉES : à chaque image, Three recompose la matrice de chacun des ~1 600
 // objets de la scène, alors que seule la caméra bouge (flocons et vapeur s'animent
