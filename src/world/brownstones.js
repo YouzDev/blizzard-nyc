@@ -304,66 +304,145 @@ function bsArchedDoor(side, fx, zd, yDoor, face, sty) {
   }
   addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(X(0.9), yDoor + 2.0, zd)), color: new THREE.Color(0xffc27a), intensity: 6, distance: 7 });
   addSubject({ label: `Une porte cintrée de brownstone, n° ${num}`, value: 0.65, glows: true, box: RIGHT.box(boxAt(X(0.25), zd, 0.3, SW / 2 + 0.5, yDoor - 0.1, yDoor + SH + 0.8)) });
-  return { SW, SH, yWreath: yDoor + 1.55, xWreath: X(-BS_REC + 0.1) };
+  return { SW, SH, yWreath: yDoor + 1.55, xWreath: X(-BS_REC + 0.1), arch: true, half: R + 0.2, spring: yDoor + DH + 0.06 };
 }
 
-/* Décorations de fêtes (photo de l'utilisateur) : guirlandes de sapin le long des rampes et de la
-   grille, piquées de petites ampoules chaudes (le bloom en fait des points lumineux), nœuds rouges,
-   couronne sur la porte et aux fenêtres du parlor floor. Une maison sur trois environ. */
+/* Décorations de fêtes (photos de l'utilisateur) : chaque maison décorée tire SON assortiment, pour
+   qu'aucune ne ressemble à sa voisine — couleur des ampoules (blanc chaud, blanc froid, multicolore,
+   rouge et or), rampes (guirlande de sapin avec ou sans boules, ou ampoules seules enroulées),
+   grille (festons, boules, ampoules ou rien), porte (couronne lumineuse, couronne à gros nœud et
+   baies rouges, guirlande qui encadre la porte, ou deux petits sapins illuminés en pots), fenêtres
+   (bougies électriques, guirlandes drapées, contour d'ampoules, couronnes à nœud, ou rien), parfois
+   un sapin illuminé dans la cour et un rideau de stalactites lumineuses sous le bandeau.
+   Ampoules = petites sphères très lumineuses (le bloom les fait briller) ; tout est fusionné par
+   matériau et par tronçon, matériaux sans texture : aucun shader en plus. */
 const bsGarlandMat = new THREE.MeshStandardMaterial({ color: 0x1b3220, roughness: 0.85 });
-const bsBulbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4.6, 3.3, 1.7) });
-let bsGarland = [], bsBulbs = [], bsBows = [];
+const BS_BULB = { warm: [4.6, 3.3, 1.7], cool: [3.0, 3.5, 4.8], red: [4.6, 0.45, 0.35], green: [0.6, 3.9, 1.0], blue: [0.8, 1.4, 5.0], amber: [4.8, 2.5, 0.5], gold: [4.4, 3.4, 0.9] };
+const BS_PALETTES = { blancChaud: ['warm'], blancFroid: ['cool'], multicolore: ['red', 'green', 'blue', 'amber'], rougeOr: ['red', 'gold'] };
+const BS_BALLS = [0x8e0f12, 0xb8892e, 0xaeb3ba, 0x1d5a2a, 0x2a3f8a];
+const bsBulbMats = new Map(Object.entries(BS_BULB).map(([k, c]) => [k, new THREE.MeshBasicMaterial({ color: new THREE.Color(...c) })]));
+let bsGarland = [], bsBulbs = new Map(), bsBalls = new Map(), bsBows = [], bsCandles = [];
 function bsFlushDecor() {
   if (bsGarland.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsGarland), bsGarlandMat));
-  if (bsBulbs.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsBulbs), bsBulbMat));
+  for (const [k, l] of bsBulbs) RIGHT.add(new THREE.Mesh(mergeGeometries(l), bsBulbMats.get(k)));
+  for (const [c, l] of bsBalls) RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(l), paintMat(c, 0.22, 0.65)), false, true));
   if (bsBows.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsBows), paintMat(0x9a0d0d, 0.55, 0.05)));
-  bsGarland = []; bsBulbs = []; bsBows = [];
+  if (bsCandles.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsCandles), paintMat(0xe6e1d6, 0.6, 0)));
+  bsGarland = []; bsBulbs = new Map(); bsBalls = new Map(); bsBows = []; bsCandles = [];
 }
-/** Guirlande entre a et b (légèrement tombante), ampoules en spirale autour. */
-function bsGarlandSeg(a, b, sag = 0.07) {
-  const m = a.clone().add(b).multiplyScalar(0.5); m.y -= sag;
-  const curve = new THREE.QuadraticBezierCurve3(a, m, b), len = a.distanceTo(b);
-  bsGarland.push(new THREE.TubeGeometry(curve, Math.max(4, Math.round(len / 0.12)), 0.08, 5, false));
-  const nb = Math.max(3, Math.round(len / 0.065));
+const bsPick = list => list[Math.floor(Math.random() * list.length)];
+function bsBulb(p, col, r = 0.032) {
+  if (!bsBulbs.has(col)) bsBulbs.set(col, []);
+  const g = new THREE.SphereGeometry(r, 5, 4); g.translate(p.x, p.y, p.z); bsBulbs.get(col).push(g);
+}
+function bsBall(p, color, r = 0.055) {
+  if (!bsBalls.has(color)) bsBalls.set(color, []);
+  const g = new THREE.SphereGeometry(r, 8, 6); g.translate(p.x, p.y, p.z); bsBalls.get(color).push(g);
+}
+/** Ampoules le long d'une courbe, couleurs de la palette en alternance, enroulées à `wrap` m de l'axe. */
+function bsBulbsAlong(curve, len, pal, step = 0.065, wrap = 0.065) {
+  const nb = Math.max(3, Math.round(len / step));
   for (let k = 0; k <= nb; k++) {
     const p = curve.getPoint(k / nb), t = k * 2.4;
-    const g = new THREE.SphereGeometry(0.032, 5, 4); g.translate(p.x + Math.cos(t) * 0.065, p.y + Math.sin(t) * 0.065, p.z + Math.sin(t * 0.7) * 0.065); bsBulbs.push(g);
+    bsBulb(new THREE.Vector3(p.x + Math.cos(t) * wrap, p.y + Math.sin(t) * wrap, p.z + Math.sin(t * 0.7) * wrap), pal[k % pal.length]);
   }
 }
-/** Nœud rouge (deux boucles et deux pans) en p, tourné vers la rue (face à ±x). */
-function bsBow(p) {
+/** Guirlande de sapin entre a et b (tombante de `sag`) ; ampoules et boules selon le kit. */
+function bsGarlandSeg(a, b, sag, kit, o = {}) {
+  const m = a.clone().add(b).multiplyScalar(0.5); m.y -= sag;
+  const curve = new THREE.QuadraticBezierCurve3(a, m, b), len = a.distanceTo(b);
+  if (!o.bare) bsGarland.push(new THREE.TubeGeometry(curve, Math.max(4, Math.round(len / 0.12)), o.r ?? 0.08, 5, false));
+  if (!o.noLights) bsBulbsAlong(curve, len, kit.pal, o.bare ? 0.05 : 0.065, o.bare ? 0.03 : 0.065);
+  if (o.balls) { const nb = Math.max(1, Math.round(len / 0.32)); for (let k = 1; k < nb; k++) { const p = curve.getPoint(k / nb); bsBall(new THREE.Vector3(p.x, p.y - 0.12, p.z), kit.balls[k % kit.balls.length]); } }
+}
+/** Nœud rouge (deux boucles, deux pans) en p ; s : taille. */
+function bsBow(p, s = 1) {
   for (const e of [-1, 1]) {
-    const l = new THREE.SphereGeometry(0.075, 8, 6); l.scale(0.5, 0.75, 1); l.translate(p.x, p.y + 0.02, p.z + e * 0.07); bsBows.push(l);
-    const t = new THREE.BoxGeometry(0.03, 0.2, 0.045); t.rotateX(e * 0.3); t.translate(p.x, p.y - 0.1, p.z + e * 0.04); bsBows.push(t);
+    const l = new THREE.SphereGeometry(0.075 * s, 8, 6); l.scale(0.5, 0.75, 1); l.translate(p.x, p.y + 0.02 * s, p.z + e * 0.07 * s); bsBows.push(l);
+    const t = new THREE.BoxGeometry(0.03 * s, 0.2 * s, 0.045 * s); t.rotateX(e * 0.3); t.translate(p.x, p.y - 0.1 * s, p.z + e * 0.04 * s); bsBows.push(t);
   }
 }
-/** Couronne (repère de la rue) en (x, y, z), face à la rue. */
-function bsWreath(side, x, y, z, r = 0.3) {
+/** Couronne face à la rue : lumineuse (palette) ou classique (gros nœud, baies rouges). */
+function bsWreath(side, x, y, z, r, kit, lit) {
   const g = new THREE.TorusGeometry(r, 0.085, 6, 18); g.rotateY(Math.PI / 2); g.translate(x, y, z); bsGarland.push(g);
-  for (let k = 0; k < 22; k++) { const a = k / 22 * Math.PI * 2, s = new THREE.SphereGeometry(0.03, 5, 4); s.translate(x - side * 0.06, y + Math.sin(a) * r, z + Math.cos(a) * r); bsBulbs.push(s); }
-  bsBow(new THREE.Vector3(x - side * 0.08, y - r, z));
+  if (lit) for (let k = 0; k < 22; k++) { const a = k / 22 * Math.PI * 2; bsBulb(new THREE.Vector3(x - side * 0.06, y + Math.sin(a) * r, z + Math.cos(a) * r), kit.pal[k % kit.pal.length], 0.03); }
+  else for (let k = 0; k < 9; k++) { const a = k / 9 * Math.PI * 2 + 0.3; bsBall(new THREE.Vector3(x - side * 0.07, y + Math.sin(a) * r, z + Math.cos(a) * r), 0x8e0f12, 0.035); }   // baies
+  bsBow(new THREE.Vector3(x - side * 0.08, y - r, z), lit ? 1 : 1.6);
+}
+/** Petit sapin illuminé (pot ou pleine terre) : étages de cônes, ampoules en spirale, étoile. */
+function bsLitTree(x, y0, z, h, kit, pot) {
+  if (pot) { const p = new THREE.CylinderGeometry(0.2, 0.15, 0.3, 10); p.translate(x, y0 + 0.15, z); bsCandles.push(p); y0 += 0.3; }
+  for (let t = 0; t < 3; t++) { const f = t / 3, ch = h * 0.5, c = new THREE.ConeGeometry(h * 0.36 * (1 - f * 0.55), ch, 10); c.translate(x, y0 + 0.1 + f * h * 0.6 + ch / 2, z); bsGarland.push(c); }
+  const n = Math.round(h * 26);
+  for (let k = 0; k < n; k++) { const f = k / n, a = k * 2.2, r = h * 0.34 * (1 - f) + 0.03; bsBulb(new THREE.Vector3(x + Math.cos(a) * r, y0 + 0.15 + f * h * 0.95, z + Math.sin(a) * r), kit.pal[k % kit.pal.length], 0.03); }
+  bsBulb(new THREE.Vector3(x, y0 + h + 0.18, z), 'gold', 0.07);
+  snowPad(x, y0 + h * 0.62, z, h * 0.3, h * 0.3, 0.06);
 }
 
-/** Habille une maison pour les fêtes : guirlandes sur les rampes du perron et en festons sur la grille,
- *  nœuds rouges, couronnes sur la porte et aux fenêtres du parlor floor, une lueur chaude au pied. */
-function bsDecorate(side, X, zd, yP, rails, fences, wreath, winBays) {
-  for (const [a, b] of rails) bsGarlandSeg(a.clone().setY(a.y - 0.04), b.clone().setY(b.y - 0.04), 0.05);
-  rails.forEach(([a], i) => { if (i % 2 === 0) bsBow(a.clone().setY(a.y - 0.08)); });          // nœud au pied de chaque rampe
+/** Habille une maison pour les fêtes, avec un assortiment tiré au hasard. h : { zd, yP, rails,
+ *  fences, door, wins, za, zb, free }. */
+function bsDecorate(side, X, h) {
+  const palName = bsPick(Object.keys(BS_PALETTES));
+  const kit = { pal: BS_PALETTES[palName], balls: [bsPick(BS_BALLS), bsPick(BS_BALLS), 0xb8892e],
+    rail: bsPick(['sapin', 'sapin-boules', 'ampoules']), fence: bsPick(['festons', 'festons-boules', 'ampoules', 'rien']),
+    door: bsPick(['couronne', 'couronne-noeud', 'encadrement', 'sapins']), wins: bsPick(['bougies', 'drapé', 'contour', 'couronnes', 'rien']) };
+  // rampes du perron
+  for (const [a, b] of h.rails) {
+    const A = a.clone().setY(a.y - 0.04), B = b.clone().setY(b.y - 0.04);
+    if (kit.rail === 'ampoules') bsGarlandSeg(A, B, 0, kit, { bare: true });
+    else bsGarlandSeg(A, B, 0.05, kit, { balls: kit.rail === 'sapin-boules' });
+  }
+  if (kit.rail !== 'ampoules') h.rails.forEach(([a], i) => { if (i % 2 === 0) bsBow(a.clone().setY(a.y - 0.08)); });
+  // grille de la cour
   const xf = side * (FACADE_X + 0.15), yf = SIDEWALK_H + 1.38;
-  for (const [za, zb] of fences) {
+  if (kit.fence !== 'rien') for (const [za, zb] of h.fences) {
     if (zb - za < 0.6) continue;
     const n = Math.max(1, Math.round((zb - za) / 1.2));
     for (let k = 0; k < n; k++) {
-      const z0 = za + (zb - za) * k / n, z1 = za + (zb - za) * (k + 1) / n;
-      bsGarlandSeg(new THREE.Vector3(xf, yf, z0 + 0.05), new THREE.Vector3(xf, yf, z1 - 0.05), 0.16);
-      bsBow(new THREE.Vector3(xf - side * 0.05, yf + 0.02, z0 + 0.05));
+      const z0 = za + (zb - za) * k / n, z1 = za + (zb - za) * (k + 1) / n, A = new THREE.Vector3(xf, yf, z0 + 0.05), B = new THREE.Vector3(xf, yf, z1 - 0.05);
+      if (kit.fence === 'ampoules') bsGarlandSeg(A, B, 0.02, kit, { bare: true });
+      else { bsGarlandSeg(A, B, 0.16, kit, { balls: kit.fence === 'festons-boules' }); bsBow(new THREE.Vector3(xf - side * 0.05, yf + 0.02, z0 + 0.05)); }
     }
   }
-  bsWreath(side, wreath.x, wreath.y, zd, 0.3);
-  for (const zb of winBays) bsWreath(side, X(-BS_REC + 0.12), yP + 1.75, zb, 0.36);
-  addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(X(AREA_W * 0.6), yP + 0.6, zd)), color: new THREE.Color(0xffc890), intensity: 3.5, distance: 6 });
-  addSubject({ label: 'Un perron décoré pour les fêtes', value: 0.9, glows: true, box: RIGHT.box(boxAt(X(AREA_W / 2), zd, AREA_W / 2 + 0.2, 2.2, SIDEWALK_H, yP + 2.6)),
-    moment: () => ({ pts: 3, why: 'guirlandes allumées sous la neige' }) });
+  // porte
+  const D = h.door;
+  if (kit.door === 'couronne' || kit.door === 'couronne-noeud') bsWreath(side, D.xWreath, D.yWreath, h.zd, 0.3, kit, kit.door === 'couronne');
+  else if (kit.door === 'encadrement') {
+    // guirlande qui suit le pourtour de la porte (l'arc pour une porte cintrée), un nœud en haut
+    const x = X(0.22), half = D.half, pts = [new THREE.Vector3(x, h.yP + 0.3, h.zd - half)];
+    if (D.arch) for (let k = 0; k <= 8; k++) { const a = Math.PI - k * Math.PI / 8; pts.push(new THREE.Vector3(x, D.spring + Math.sin(a) * half, h.zd + Math.cos(a) * half)); }
+    else pts.push(new THREE.Vector3(x, D.top, h.zd - half), new THREE.Vector3(x, D.top, h.zd + half));
+    pts.push(new THREE.Vector3(x, h.yP + 0.3, h.zd + half));
+    for (let k = 0; k < pts.length - 1; k++) bsGarlandSeg(pts[k], pts[k + 1], 0.02, kit, { balls: k % 2 === 0 });
+    bsBow(new THREE.Vector3(x - side * 0.04, (D.arch ? D.spring + half : D.top) + 0.05, h.zd), 1.5);
+  } else for (const e of [-1, 1]) bsLitTree(X(0.45), h.yP, h.zd + e * 0.78, 0.95, kit, true);
+  // fenêtres : parlor floor, et pour les bougies tous les étages
+  for (const w of h.wins) {
+    const x = X(-BS_REC + 0.12);
+    if (kit.wins === 'bougies') {
+      const c = new THREE.CylinderGeometry(0.028, 0.03, 0.26, 8); c.translate(x, w.y0 + 0.13, w.z); bsCandles.push(c);
+      bsBulb(new THREE.Vector3(x, w.y0 + 0.31, w.z), 'amber', 0.03);
+    }
+    if (!w.parlor) continue;
+    if (kit.wins === 'couronnes') bsWreath(side, x, w.y0 + 1.45, w.z, 0.34, kit, false);
+    else if (kit.wins === 'drapé') {
+      const a = new THREE.Vector3(X(0.18), w.y1 + 0.05, w.z - w.w / 2 - 0.1), b = new THREE.Vector3(X(0.18), w.y1 + 0.05, w.z + w.w / 2 + 0.1);
+      bsGarlandSeg(a, b, 0.32, kit, { balls: true }); bsBow(a, 0.8); bsBow(b, 0.8);
+    } else if (kit.wins === 'contour') {
+      const x2 = X(0.05), c = [[w.z - w.w / 2 - 0.05, w.y0], [w.z - w.w / 2 - 0.05, w.y1 + 0.05], [w.z + w.w / 2 + 0.05, w.y1 + 0.05], [w.z + w.w / 2 + 0.05, w.y0]];
+      for (let k = 0; k < 3; k++) bsGarlandSeg(new THREE.Vector3(x2, c[k][1], c[k][0]), new THREE.Vector3(x2, c[k + 1][1], c[k + 1][0]), 0, kit, { bare: true });
+    }
+  }
+  // parfois un sapin illuminé dans la cour, parfois des stalactites lumineuses sous le bandeau
+  if (Math.random() < 0.3 && h.free[1] - h.free[0] > 1.2) bsLitTree(X(1.3), SIDEWALK_H + 0.25, (h.free[0] + h.free[1]) / 2, 1.7, kit, false);
+  if (Math.random() < 0.3) for (let z = h.za + 0.2; z < h.zb - 0.2; z += 0.14) {
+    if (Math.abs(z - h.zd) < 1.15) continue;                                     // le perron
+    const k = 2 + Math.floor(Math.random() * 4);
+    for (let j = 0; j < k; j++) bsBulb(new THREE.Vector3(X(0.18), h.yP - 0.36 - j * 0.09, z), 'cool', 0.022);
+  }
+  addPointSource({ pos: RIGHT.toWorld(new THREE.Vector3(X(AREA_W * 0.6), h.yP + 0.6, h.zd)), color: new THREE.Color(0xffc890), intensity: 3.5, distance: 6 });
+  addSubject({ label: 'Une maison décorée pour les fêtes', value: 0.9, glows: true, box: RIGHT.box(boxAt(X(AREA_W / 2), h.zd, AREA_W / 2 + 0.2, 2.2, SIDEWALK_H, h.yP + 2.6)),
+    moment: () => ({ pts: 3, why: 'décorations allumées sous la neige' }) });
 }
 
 /** Grille de la cour anglaise : muret de grès, barreaux à pointe de lance, lisses, poteaux à boule. */
@@ -409,6 +488,7 @@ function buildTerrace(side, z0, n, W, sty) {
 
   for (let i = 0; i < n; i++) {
     const za = z0 + i * W, doorEnd = i % 2 === 0, bays = [W / 6, W / 2, 5 * W / 6].map(u => za + u), doorBay = doorEnd ? 2 : 0, zd = bays[doorBay];
+    const wins = [];                                              // fenêtres de la maison (décorations)
     bays.forEach((zb, b) => {
       // rez-de-jardin : fenêtres à moitié dans la neige de la cour, derrière une grille
       if (b !== doorBay) {
@@ -419,12 +499,14 @@ function buildTerrace(side, z0, n, W, sty) {
         // parlor floor : hautes fenêtres sous un fronton
         const wp = 1.15, p0 = yP + 0.35, p1 = yP + 3.0;
         holesF.push({ z0: zb - wp / 2, z1: zb + wp / 2, y0: p0, y1: p1 }); bsWindow(side, xB, p0, p1, zb, wp, 0.38, 0.4);
+        wins.push({ z: zb, y0: p0, y1: p1, w: wp, parlor: true });
         bsSill(face, X, p0, zb, wp); bsParlorHood(face, X, p1, zb, wp, sty.hood);
       }
       // étages : trois fenêtres alignées sur les travées, la dernière plus basse
       for (let j = 0; j < sty.floors; j++) {
         const w = 1.1, y0 = y2 + j * UPPER_H + 0.75, y1 = y0 + (j === sty.floors - 1 ? 1.7 : 2.0);
         holesF.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.3, 0.45);
+        wins.push({ z: zb, y0, y1, w, parlor: false });
         bsSill(face, X, y0, zb, w);
         if (sty.hood === 'segment') { bsParlorHood(face, X, y1, zb, w, 'segment'); continue; }   // frontons cintrés à tous les étages
         bsBox(face, 0.06, 0.12, w + 0.2, X(0.03), y1 + 0.06, zb);                                 // frise
@@ -434,17 +516,18 @@ function buildTerrace(side, z0, n, W, sty) {
       }
     });
     // porte du parlor floor : entrée complète (encadrement en grès, lanterne loin du voisin)
-    let wreath = { y: yP + 1.55, x: X(0.12) };
+    let door = { yWreath: yP + 1.55, xWreath: X(0.12), arch: false, half: 0.95, top: yP + 3.05 };
     if (sty.door === 'arch') {
       const d = bsArchedDoor(side, fx, zd, yP, face, sty);
       holesF.push({ z0: zd - d.SW / 2, z1: zd + d.SW / 2, y0: yP, y1: yP + d.SH });
-      wreath = { y: d.yWreath, x: d.xWreath };
+      door = d;
     } else buildEntrance(side, zd, yP, { faceX: fx, trim: face, lanternSide: doorEnd ? -1 : 1 });
     const rails = bsStoop(side, fx, zd, sty, face, doorEnd ? 1 : -1);
     // grille de la cour : interrompue au pied du perron ; séparations entre cours (sauf entre perrons appariés)
     const s0 = zd - STOOP_W / 2 - 0.02, s1 = zd + STOOP_W / 2 + 0.02;
     bsFence(side, za, s0); bsFence(side, s1, za + W);
-    if (Math.random() < 0.33) bsDecorate(side, X, zd, yP, rails, [[za, s0], [s1, za + W]], wreath, bays.filter((_, b) => b !== doorBay));
+    const free = doorEnd ? [za + 0.4, s0 - 0.3] : [s1 + 0.3, za + W - 0.4];
+    if (Math.random() < 0.38) bsDecorate(side, X, { zd, yP, rails, fences: [[za, s0], [s1, za + W]], door, wins, za, zb: za + W, free });
     if (!doorEnd || i === 0) bsPartition(side, za + 0.02);
     if (i === n - 1) bsPartition(side, za + W - 0.02);
     // cheminée sur le mur mitoyen
