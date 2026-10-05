@@ -12,7 +12,9 @@ export const scene = new THREE.Scene();
 export const FOG_COLOR = new THREE.Color(0x1a2336);   // même luminosité que 0x1b2230, un peu plus bleue (image modèle)
 scene.fog = new THREE.FogExp2(FOG_COLOR, FOG_DENSITY);
 
-export const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 260);
+// plan lointain à 700 m : le gratte-ciel au bout de la rue (ambience.js) est à ~580 m du départ ; la
+// précision de profondeur dépend surtout du plan proche, et le masquage des rues coupe déjà à 100 m
+export const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 700);
 camera.position.set(-8.2, SIDEWALK_H + EYE_HEIGHT, 10);   // milieu du couloir piéton (entre lampadaires et clôtures)
 scene.add(camera);
 

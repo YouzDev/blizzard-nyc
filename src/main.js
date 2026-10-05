@@ -16,7 +16,7 @@ import './world/church.js';
 import './world/props.js';
 import { updateVehicles } from './world/vehicles.js';
 import { neonMat, neonZ } from './world/neon.js';
-import './world/ambience.js';
+import { updateAmbience } from './world/ambience.js';
 import { updateTrafficLights } from './world/intersection.js';
 import './world/park.js';
 import { flickerLights } from './world/lightRegistry.js';
@@ -123,6 +123,7 @@ function frame(rawDt, t) {
   updateSteam(dt);
   silhouetteUniforms.uTime.value = t;                           // passants derrière les fenêtres allumées
   updateTrafficLights(t);
+  updateAmbience(t);                                            // feu d'obstacle du gratte-ciel du fond
   updateVehicles(t);                                            // gyrophares de l'ambulance
   updateWind(t, camera);                                        // son du vent (si activé)
 

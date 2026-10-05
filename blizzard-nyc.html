@@ -440,7 +440,9 @@ const scene = new THREE.Scene();
 const FOG_COLOR = new THREE.Color(0x1a2336);   // même luminosité que 0x1b2230, un peu plus bleue (image modèle)
 scene.fog = new THREE.FogExp2(FOG_COLOR, FOG_DENSITY);
 
-const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 260);
+// plan lointain à 700 m : le gratte-ciel au bout de la rue (ambience.js) est à ~580 m du départ ; la
+// précision de profondeur dépend surtout du plan proche, et le masquage des rues coupe déjà à 100 m
+const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 700);
 camera.position.set(-8.2, SIDEWALK_H + EYE_HEIGHT, 10);   // milieu du couloir piéton (entre lampadaires et clôtures)
 scene.add(camera);
 
@@ -5362,6 +5364,162 @@ function band(st, cx, w, z0, z1, segZ, flip, opacity) {
   }
 }
 
+/* ───────────────────────── src/textures/streetSigns.js ───────────────────────── */
+/* Panneaux de rue new-yorkais (world/streetSigns.js) et faces des boîtes à journaux (props.js).
+   Neige collée par endroits (taches blanches floues sur le bord haut, plaques sur la face) : les
+   panneaux sont à moitié ensevelis, comme tout le reste. */
+
+/** Taches de neige collée sur un panneau : le long du bord haut, quelques plaques sur la face. */
+function stickSnow(ctx, W, H, amount = 1, x0 = 0) {
+  ctx.save(); ctx.translate(x0, 0); ctx.filter = 'blur(3px)'; ctx.fillStyle = 'rgba(238,242,250,0.92)';
+  for (let k = 0; k < 10 * amount; k++) { ctx.beginPath(); ctx.ellipse(Math.random() * W, Math.random() * H * 0.12, 10 + Math.random() * 40, 4 + Math.random() * 10, 0, 0, Math.PI * 2); ctx.fill(); }
+  for (let k = 0; k < 3 * amount; k++) { ctx.beginPath(); ctx.ellipse(Math.random() * W, Math.random() * H, 8 + Math.random() * 26, 6 + Math.random() * 14, Math.random(), 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+
+/** Plaque de nom de rue : vert, liseré blanc, nom en capitales et minuscules (« Rivington St »). */
+function makeStreetNameTexture(name) {
+  const W = 512, H = 118, c = makeCanvas(W, H), ctx = c.getContext('2d');
+  ctx.fillStyle = '#0b5d34'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#f2f2ee'; ctx.lineWidth = 5; ctx.strokeRect(7, 7, W - 14, H - 14);
+  ctx.fillStyle = '#f6f6f2'; ctx.font = 'bold 66px Helvetica, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(name, W / 2, H / 2 + 3);
+  stickSnow(ctx, W, H, 0.8);
+  return toTexture(c, true, false);
+}
+
+/** « ONE WAY » : panneau noir, flèche blanche (vers la droite ; retourner le panneau pour la gauche). */
+function makeOneWayTexture() {
+  const W = 512, H = 170, c = makeCanvas(W, H), ctx = c.getContext('2d');
+  ctx.fillStyle = '#0c0c0c'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#f4f4f4';
+  ctx.beginPath(); ctx.moveTo(30, 52); ctx.lineTo(380, 52); ctx.lineTo(380, 18); ctx.lineTo(486, 85); ctx.lineTo(380, 152); ctx.lineTo(380, 118); ctx.lineTo(30, 118); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#0c0c0c'; ctx.font = 'bold 54px Helvetica, Arial, sans-serif'; ctx.textBaseline = 'middle'; ctx.fillText('ONE WAY', 52, 88);
+  stickSnow(ctx, W, H, 0.6);
+  return toTexture(c, true, false);
+}
+
+/** Panneaux de stationnement (sur les lampadaires) : nettoyage alterné (P barré et balai rouges),
+ *  arrêt interdit, stationnement payant. */
+function makeParkingSignTextures() {
+  const out = [];
+  const panel = (draw) => {
+    const W = 256, H = 368, c = makeCanvas(W, H), ctx = c.getContext('2d');
+    ctx.fillStyle = '#f2f1ec'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 4; ctx.strokeRect(6, 6, W - 12, H - 12);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    draw(ctx, W, H);
+    stickSnow(ctx, W, H, 0.7);
+    out.push(toTexture(c, true, false));
+  };
+  // nettoyage des rues : P rouge barré, balai, horaires
+  panel((ctx, W) => {
+    ctx.strokeStyle = '#c4161c'; ctx.lineWidth = 9; ctx.beginPath(); ctx.arc(W / 2, 84, 54, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#c4161c'; ctx.font = 'bold 76px Helvetica, Arial, sans-serif'; ctx.fillText('P', W / 2, 88);
+    ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(W / 2 - 38, 46); ctx.lineTo(W / 2 + 38, 122); ctx.stroke();
+    ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(W / 2 + 70, 40); ctx.lineTo(W / 2 + 40, 100); ctx.stroke();       // balai
+    ctx.fillRect(W / 2 + 26, 98, 30, 16);
+    ctx.font = 'bold 30px Helvetica, Arial, sans-serif'; ctx.fillText('8:30AM-10AM', W / 2, 186);
+    ctx.font = 'bold 34px Helvetica, Arial, sans-serif'; ctx.fillText('TUES & FRI', W / 2, 232);
+    ctx.font = '22px Helvetica, Arial, sans-serif'; ctx.fillStyle = '#1a1a1a'; ctx.fillText('STREET CLEANING', W / 2, 300);
+  });
+  // arrêt interdit
+  panel((ctx, W) => {
+    ctx.fillStyle = '#c4161c'; ctx.font = 'bold 48px Helvetica, Arial, sans-serif';
+    ctx.fillText('NO', W / 2, 70); ctx.fillText('STANDING', W / 2, 130); ctx.fillText('ANYTIME', W / 2, 190);
+    ctx.lineWidth = 10; ctx.strokeStyle = '#c4161c'; ctx.beginPath(); ctx.moveTo(40, 280); ctx.lineTo(W - 70, 280); ctx.stroke();
+    ctx.fillStyle = '#c4161c'; ctx.beginPath(); ctx.moveTo(30, 280); ctx.lineTo(70, 252); ctx.lineTo(70, 308); ctx.closePath(); ctx.fill();
+  });
+  // stationnement payant
+  panel((ctx, W) => {
+    ctx.fillStyle = '#137a3e'; ctx.font = 'bold 84px Helvetica, Arial, sans-serif'; ctx.fillText('2', W / 2, 78);
+    ctx.font = 'bold 40px Helvetica, Arial, sans-serif'; ctx.fillText('HOUR', W / 2, 140);
+    ctx.font = 'bold 32px Helvetica, Arial, sans-serif'; ctx.fillText('METERED', W / 2, 200); ctx.fillText('PARKING', W / 2, 240);
+    ctx.font = '24px Helvetica, Arial, sans-serif'; ctx.fillStyle = '#1a1a1a'; ctx.fillText('9AM-7PM', W / 2, 296); ctx.fillText('EXCEPT SUNDAY', W / 2, 326);
+  });
+  return out;
+}
+
+/** Faces avant des boîtes à journaux (une case par journal, noms inventés) : bandeau du titre, vitre
+ *  sombre derrière laquelle on devine la une, monnayeur. 5 cases de 256 × 360. */
+const NEWS_BOXES = [['THE CITY', '#9a1a14'], ['METRO DAILY', '#1d4f9a'], ['FREE WEEKLY', '#c9a21a'], ['REAL ESTATE', '#d8d8d0'], ['THE LEDGER', '#1f6a3a']];
+function makeNewsBoxTexture() {
+  const CW = 256, H = 360, c = makeCanvas(CW * NEWS_BOXES.length, H), ctx = c.getContext('2d');
+  NEWS_BOXES.forEach(([name, col], i) => {
+    const x = i * CW;
+    ctx.fillStyle = col; ctx.fillRect(x, 0, CW, H);
+    const light = col === '#d8d8d0' || col === '#c9a21a';
+    ctx.fillStyle = light ? '#1a1a1a' : '#f4f4f0'; ctx.font = 'bold 34px Georgia, serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(name, x + CW / 2, 40, CW - 20);
+    ctx.fillStyle = '#20242a'; ctx.fillRect(x + 22, 76, CW - 44, 160);                 // vitre
+    ctx.fillStyle = 'rgba(220,214,200,0.55)'; ctx.fillRect(x + 40, 96, CW - 80, 124);   // la une derrière
+    ctx.fillStyle = 'rgba(30,30,30,0.6)'; for (let k = 0; k < 6; k++) ctx.fillRect(x + 50, 112 + k * 17, CW - 100 - (k % 3) * 25, 6);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(x + 22, 250, CW - 44, 14);          // poignée
+    ctx.fillStyle = '#9aa0a8'; ctx.fillRect(x + CW - 70, 286, 34, 46);                    // monnayeur
+    ctx.fillStyle = '#2a2a2a'; ctx.fillRect(x + CW - 58, 292, 10, 24);
+    stickSnow(ctx, CW, H, 0.5, x);
+  });
+  return toTexture(c, true, false);
+}
+
+/* ───────────────────────── src/world/streetSigns.js ───────────────────────── */
+/* =====================================================================
+   7 sexies. PANNEAUX DE RUE (demande utilisateur : « l'esprit New York »)
+   - Aux deux potences du carrefour : les plaques VERTES des noms de rue, en croix — « Ludlow St »
+     (la rue principale) et « Rivington St » (la transversale, rues de gauche et de droite : la
+     station de métro porte son nom) —, et un « ONE WAY » noir à flèche blanche.
+   - Sur un lampadaire sur deux : un panneau de stationnement (nettoyage alterné, arrêt interdit,
+     stationnement payant), tourné le long de la rue.
+   Neige collée dans les textures, une pellicule sur la tranche haute. Matériaux à texture (même
+   programme que les autres) : aucun shader en plus.
+   ===================================================================== */
+const MAIN_STREET_NAME = 'Ludlow St', CROSS_STREET_NAME = 'Rivington St';
+// peinture rétroréfléchissante : une faible lueur propre (la texture elle-même), sinon la nuit une plaque
+// loin des lampadaires n'était qu'un rectangle noir
+const signMat = map => new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0.2, emissiveMap: map, emissive: new THREE.Color(0.32, 0.32, 0.32) });
+const ssCrossMat = signMat(makeStreetNameTexture(CROSS_STREET_NAME)), ssMainMat = signMat(makeStreetNameTexture(MAIN_STREET_NAME));
+const ssOneWayMat = signMat(makeOneWayTexture()), ssEdge = new THREE.MeshStandardMaterial({ color: 0x0b5d34, roughness: 0.5, metalness: 0.2 });
+
+/** Plaque (boîte mince) : faces avant/arrière texturées, tranches unies ; pellicule de neige dessus. */
+function ssBlade(parent, w, h, x, y, z, rotY, mat, edge) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.02), [edge, edge, edge, edge, mat, mat]);
+  m.position.set(x, y, z); m.rotation.y = rotY; parent.add(m);
+  const sn = new THREE.Mesh(new THREE.BoxGeometry(w + 0.02, 0.035, 0.05), MAT.snow); sn.position.set(x, y + h / 2 + 0.015, z); sn.rotation.y = rotY; parent.add(sn);
+  return m;
+}
+// les deux potences des feux (intersection.js : mât en x = ±(ROAD_HALF + 1,2), z = CROSS_Z + 7,5)
+for (const side of [-1, 1]) {
+  const g = new THREE.Group(), px = side * (ROAD_HALF + 1.2), pz = CROSS_Z + 7.5;
+  ssBlade(g, 1.0, 0.24, px, 4.45, pz + 0.13, 0, ssCrossMat, ssEdge);                 // en travers : la transversale
+  ssBlade(g, 1.0, 0.24, px - side * 0.13, 4.75, pz, Math.PI / 2, ssMainMat, ssEdge); // le long : la rue principale
+  const clamp = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.5, 10), MAT.metal); clamp.position.set(px, 4.6, pz); g.add(clamp);
+  ssBlade(g, 0.78, 0.26, px, 3.45, pz + 0.13, 0, ssOneWayMat, new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.5 }));
+  scene.add(g);
+  addSubject({ label: `Le coin de ${MAIN_STREET_NAME} et ${CROSS_STREET_NAME}`, value: 0.6, box: boxAt(px, pz, 0.6, 0.6, 3.2, 4.95) });
+}
+
+// panneaux de stationnement : textures et matériaux partagés ; géométries accumulées par rue et fusionnées
+// (flushParkingSigns) : un panneau isolé coûtait ~9 appels de dessin (faces, revers, pattes, neige)
+const ssParkingMats = makeParkingSignTextures().map(signMat), ssBack = new THREE.MeshStandardMaterial({ color: 0x9a9ea4, roughness: 0.5, metalness: 0.5 });
+const ssParking = new Map();                                     // rue → { faces: [[…] par texture], back: [], snow: [] }
+/** Panneau de stationnement sur le lampadaire (x, z) de la rue st, face le long de la rue. */
+function addParkingSign(st, x, z) {
+  if (!ssParking.has(st)) ssParking.set(st, { faces: ssParkingMats.map(() => []), back: [], snow: [] });
+  const L = ssParking.get(st), k = Math.floor(Math.random() * ssParkingMats.length), e = Math.random() < 0.5 ? 1 : -1, y = SIDEWALK_H + 2.45, zp = z + e * 0.11;
+  const face = new THREE.PlaneGeometry(0.32, 0.46); if (e < 0) face.rotateY(Math.PI); face.translate(x, y, zp + e * 0.0065); L.faces[k].push(face);
+  const back = new THREE.BoxGeometry(0.32, 0.46, 0.012); back.translate(x, y, zp); L.back.push(back);
+  for (const dy of [-0.16, 0.16]) { const b = new THREE.BoxGeometry(0.2, 0.025, 0.03); b.translate(x, y + dy, z + e * 0.09); L.back.push(b); }
+  const sn = new THREE.BoxGeometry(0.33, 0.03, 0.04); sn.translate(x, y + 0.245, zp); L.snow.push(sn);
+}
+function flushParkingSigns() {
+  for (const [st, L] of ssParking) {
+    L.faces.forEach((list, k) => { if (list.length) st.add(new THREE.Mesh(mergeGeometries(list), ssParkingMats[k])); });
+    st.add(new THREE.Mesh(mergeGeometries(L.back), ssBack));
+    st.add(new THREE.Mesh(mergeGeometries(L.snow), MAT.snow));
+  }
+  ssParking.clear();
+}
+
 /* ───────────────────────── src/world/props.js ───────────────────────── */
 /* =====================================================================
    7. LAMPADAIRES ORNEMENTAUX, POUBELLES, BOUCHES D'INCENDIE, CONGÈRES
@@ -5637,7 +5795,10 @@ function furnishStreet(st, sides) {
   for (const s of [-1, 1]) {
     const S = sides[s < 0 ? 0 : 1], [l0, l1] = S.lamps;
     const first = LAMP_Z0 + (s > 0 ? LAMP_PITCH / 2 : 0);
-    for (let z = first + LAMP_PITCH * Math.ceil((l0 - first) / LAMP_PITCH); z < l1; z += LAMP_PITCH) buildLamppost(st, s * (ROAD_HALF + 0.55), z, s);
+    for (let z = first + LAMP_PITCH * Math.ceil((l0 - first) / LAMP_PITCH); z < l1; z += LAMP_PITCH) {
+      buildLamppost(st, s * (ROAD_HALF + 0.55), z, s);
+      if (Math.random() < 0.5) addParkingSign(st, s * (ROAD_HALF + 0.55), z);   // panneau de stationnement (streetSigns.js)
+    }
   }
   for (const s of [-1, 1]) {
     const S = sides[s < 0 ? 0 : 1], [w0, w1] = S.wall;
@@ -5677,12 +5838,65 @@ furnishStreet(RIGHT, [
   { lamps: [BS_ROW_END + 2, -FACADE_X - 2], wall: [BS_ROW_END + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 7) },
   { lamps: [BS_ROW_END + 2, -FACADE_X - 2], wall: [BS_ROW_END + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 19) },
 ]);
+flushParkingSigns();
 // Poubelles rangées dans les cours anglaises, derrière la grille (une maison sur deux)
 for (const h of brownHouses) {
   if (Math.random() < 0.5 || h.free[1] - h.free[0] < 0.9) continue;
   const n = 1 + (Math.random() < 0.5 ? 1 : 0), z = rnd(h.free[0], h.free[1] - 0.85 * (n - 1));
   for (let k = 0; k < n; k++) buildTrashCan(RIGHT, h.side * (FACADE_X + 0.75), z + k * 0.85, Math.random() * 6);
 }
+/* Boîtes à journaux et boîte aux lettres (demande utilisateur : « l'esprit New York ») : la rangée de
+   distributeurs de couleur au bord du trottoir, tournés vers les passants (noms de journaux inventés),
+   et la boîte aux lettres bleue à dôme sur ses quatre pieds (sans logo). Ensevelies : dôme de neige
+   sur chaque toit, congère au pied de la rangée. */
+// peinture mate (non métallique : sous un ciel de nuit, un métal ne renvoie presque rien) ; la face
+// imprimée garde une très faible lueur propre pour se lire hors des flaques de lumière
+const newsTex = makeNewsBoxTexture(), newsFaceMat = new THREE.MeshStandardMaterial({ map: newsTex, roughness: 0.45, metalness: 0.05, emissiveMap: newsTex, emissive: new THREE.Color(0.16, 0.16, 0.16) });
+const newsColors = NEWS_BOXES.map(([, c]) => paintMat(new THREE.Color(c).getHex(), 0.5, 0.05));
+const mailMat = paintMat(0x1c3578, 0.45, 0.35);
+/** Rangée de n boîtes à journaux le long de la rue (repère de st), au bord du trottoir du côté side, à partir de z0. */
+function buildNewsBoxes(st, side, x, z0, n) {
+  const W = 0.5, face = side;                                   // face avant tournée vers les façades
+  const order = NEWS_BOXES.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, n);
+  order.forEach((k, i) => {
+    const z = z0 + i * (W + 0.06), g = new THREE.Group();
+    const body = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.62, W), newsColors[k])); body.position.y = 0.63; g.add(body);
+    const ped = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.32, 0.3), MAT.metal)); ped.position.y = 0.16; g.add(ped);
+    const lid = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, W + 0.04), newsColors[k])); lid.position.y = 0.97; g.add(lid);
+    // face avant : la case de la planche (UV)
+    const fg = new THREE.PlaneGeometry(W - 0.04, 0.58), uv = fg.attributes.uv;
+    for (let j = 0; j < uv.count; j++) uv.setX(j, (k + uv.getX(j)) / NEWS_BOXES.length);
+    const fm = new THREE.Mesh(fg, newsFaceMat); fm.rotation.y = face > 0 ? Math.PI / 2 : -Math.PI / 2; fm.position.set(face * 0.212, 0.64, 0); g.add(fm);
+    const sn = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snow); sn.scale.set(0.8, 0.4 + Math.random() * 0.25, 0.92); sn.position.y = 0.99; g.add(sn);
+    g.position.set(x, SIDEWALK_H, z); g.rotation.y = (Math.random() - 0.5) * 0.08; st.add(g);
+  });
+  const L = n * (W + 0.06), zc = z0 + (L - W - 0.06) / 2;
+  buildDrift(st, x, SIDEWALK_H, zc, 0.5, L / 2 + 0.2, rnd(0.2, 0.32));
+  st.collider(x, zc, 0.3, L / 2);
+  addContactShadowIn(st, x, zc, 0.55, L / 2 + 0.2, 0.5);
+  addSubject({ label: 'Les distributeurs de journaux sous la neige', value: 0.5, box: st.box(boxAt(x, zc, 0.3, L / 2, SIDEWALK_H, SIDEWALK_H + 1.2)) });
+}
+/** Boîte aux lettres bleue : caisse, dôme, quatre pieds, trappe ; neige sur le dôme. */
+function buildMailbox(st, side, x, z) {
+  const g = new THREE.Group();
+  const body = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.72, 0.52), mailMat)); body.position.y = 0.72; g.add(body);
+  const dome = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.5, 18, 1, false, 0, Math.PI), mailMat)); dome.rotation.z = Math.PI / 2; dome.position.y = 1.08; g.add(dome);
+  for (const [a, b] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.36, 0.05), mailMat); leg.position.set(a * 0.21, 0.18, b * 0.22); g.add(leg); }
+  const flap = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.34), MAT.metal); flap.position.set(side * 0.265, 0.98, 0); flap.rotation.z = side * 0.25; g.add(flap);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.12, 0.22), new THREE.MeshStandardMaterial({ color: 0xd8d8d2, roughness: 0.6 })); plate.position.set(side * 0.256, 0.62, 0); g.add(plate);
+  const sn = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 7, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snow); sn.scale.set(0.9, 0.55, 0.95); sn.position.y = 1.2; g.add(sn);
+  g.position.set(x, SIDEWALK_H, z); st.add(g);
+  buildDrift(st, x, SIDEWALK_H, z, 0.42, 0.42, 0.2);
+  st.collider(x, z, 0.32, 0.32);
+  addContactShadowIn(st, x, z, 0.45, 0.45, 0.55);
+  addSubject({ label: 'Une boîte aux lettres ensevelie', value: 0.5, box: st.box(boxAt(x, z, 0.3, 0.3, SIDEWALK_H, SIDEWALK_H + 1.4)) });
+}
+// au coin de la rue principale (trottoir de droite, avant le carrefour), près du départ (trottoir de
+// gauche), et devant la bodega de la rue de gauche, à côté de la bouche de métro
+buildNewsBoxes(MAIN, 1, ROAD_HALF + 0.85, CROSS_Z + FACADE_X + 2.6, 4); buildMailbox(MAIN, 1, ROAD_HALF + 0.85, CROSS_Z + FACADE_X + 5.4);
+buildNewsBoxes(MAIN, -1, -(ROAD_HALF + 0.85), 4.2, 3); buildMailbox(MAIN, -1, -(ROAD_HALF + 0.85), 6.4);
+buildMailbox(LEFT, -1, -(ROAD_HALF + 0.85), -22.9);
+
 /* Sacs-poubelle sous la neige au bord du trottoir (rue de droite, demande utilisateur) : à New York
    les sacs attendent le ramassage en tas contre la bordure, et la tempête les a ensevelis. Sacs noirs
    surtout, quelques sacs de recyclage bleutés ; chacun déformé (bas écrasé, haut noué), un dôme de
@@ -6446,6 +6660,10 @@ let neonMat;
 }
 
 /* ───────────────────────── src/world/ambience.js ───────────────────────── */
+let beaconMat = null;
+/** Feu d'obstacle du gratte-ciel : un éclat rouge toutes les 1,5 s. */
+function updateAmbience(t) { if (beaconMat) beaconMat.color.setRGB(Math.sin(t * 4.2) > 0.6 ? 2 : 0.15, 0.06, 0.04); }
+
 /* =====================================================================
    10. LUMIÈRE D'AMBIANCE FROIDE + lune + lueur de la ville + gratte-ciel lointains
    ===================================================================== */
@@ -6494,7 +6712,45 @@ const cityGlow = new THREE.PointLight(0x7488bd, 90, 120, 2); cityGlow.position.s
   };
   // plus hautes qu'avant (45–95 m), et un tiers d'entre elles dans l'axe de la rue, là où on les voit ;
   // reculées derrière la rangée d'immeubles qui ferme le carrefour (elle s'arrête à ~121 m)
-  for (let i = 0; i < 13; i++) tower(i % 3 === 0 ? rnd(-22, 22) : rnd(-80, 80), STREET_Z_MIN - rnd(58, 100), rnd(14, 26), rnd(70, 140), false);
+  // … en laissant libre le milieu de l'axe (|x| < 8 m) : c'est par là qu'on voit le gratte-ciel du fond
+  for (let i = 0; i < 13; i++) {
+    const w = rnd(14, 26); let x = i % 3 === 0 ? rnd(-22, 22) : rnd(-80, 80);
+    if (Math.abs(x) < 8 + w / 2) x = (x < 0 ? -1 : 1) * (8 + w / 2 + rnd(0, 4));
+    tower(x, STREET_Z_MIN - rnd(58, 100), w, rnd(70, 140), false);
+  }
+  /* LE GRATTE-CIEL DU FOND (demande utilisateur : « l'esprit New York ») : dans l'axe de la rue
+     principale, à ~580 m du départ, une tour Art déco à ressauts de 270 m, son mât et son antenne ;
+     sa couronne est illuminée en ROUGE et VERT pour Noël et perce la tempête (hors brouillard, avec
+     un halo), le feu d'obstacle rouge clignote au sommet. Corps : même matériau que les autres tours
+     (silhouette un peu plus sombre que le ciel). Plan lointain de la caméra repoussé à 700 m (scene.js). */
+  {
+    const LX = 0, LZ = -560;
+    const tiers = [[44, 36, 120], [34, 28, 175], [26, 22, 215], [19, 17, 238], [14, 13, 252], [10, 10, 262], [7, 7, 270]];
+    const lit = { red: [], green: [], white: [] };
+    let y0 = 0;
+    tiers.forEach(([w, d, top], i) => {
+      const t = new THREE.Mesh(new THREE.BoxGeometry(w, top - y0, d), towerMat); t.position.set(LX, (y0 + top) / 2, LZ); scene.add(t);
+      if (i < 3) for (let r = 0; r < Math.floor((top - y0) / 4); r++) for (let c = 0; c < Math.floor(w / 3.2); c++) if (Math.random() < 0.22)
+        wins.push(new THREE.Matrix4().makeTranslation(LX - w / 2 + (c + 0.5) * (w / Math.floor(w / 3.2)), y0 + (r + 0.5) * 4, LZ + d / 2 + 0.05));
+      if (i >= 3) {                                                 // couronne : chaque ressaut éclairé, rouge / vert en alternance
+        const key = i === tiers.length - 1 ? 'white' : i % 2 ? 'red' : 'green', h = top - y0 - 0.6;
+        for (const [nx, nz, len] of [[0, 1, w], [0, -1, w], [1, 0, d], [-1, 0, d]]) {
+          const g = new THREE.PlaneGeometry(len, h); g.rotateY(Math.atan2(nx, nz)); g.translate(LX + nx * (w / 2 + 0.2), (y0 + top) / 2, LZ + nz * (d / 2 + 0.2)); lit[key].push(g);
+        }
+      }
+      y0 = top;
+    });
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.2, 22, 12), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 0.3, 0.28), fog: false })); mast.position.set(LX, 281, LZ); scene.add(mast);
+    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 26, 6), towerMat); ant.position.set(LX, 305, LZ); scene.add(ant);
+    // voilées par la neige : couleurs assourdies, c'est le halo qui fait la lumière
+    const COL = { red: new THREE.Color(0.42, 0.06, 0.05), green: new THREE.Color(0.05, 0.32, 0.13), white: new THREE.Color(0.4, 0.39, 0.35) };
+    for (const k in lit) scene.add(new THREE.Mesh(mergeGeometries(lit[k]), new THREE.MeshBasicMaterial({ color: COL[k], fog: false })));
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: new THREE.Color(0.7, 0.45, 0.4), transparent: true, opacity: 0.24, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    halo.scale.set(190, 190, 1); halo.position.set(LX, 245, LZ); scene.add(halo);
+    beaconMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2, 0.12, 0.08), fog: false });
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8), beaconMat); beacon.position.set(LX, 319, LZ); scene.add(beacon);
+    addSubject({ label: 'Le gratte-ciel illuminé pour Noël', value: 0.85, glows: true, box: new THREE.Box3(new THREE.Vector3(LX - 10, 215, LZ - 10), new THREE.Vector3(LX + 10, 320, LZ + 10)) });
+  }
   // au-delà du fond de la rue de gauche : leurs silhouettes dépassent des immeubles de l'impasse
   for (let i = 0; i < 5; i++) tower(LEFT_END_X - rnd(60, 110), CROSS_Z + (i % 2 ? rnd(-15, 15) : rnd(-55, 55)), rnd(14, 26), rnd(70, 140), 1);
   // au-delà du parc, au bout de la rue de droite : la ville de l'autre côté des arbres
@@ -8578,6 +8834,7 @@ function frame(rawDt, t) {
   updateSteam(dt);
   silhouetteUniforms.uTime.value = t;                           // passants derrière les fenêtres allumées
   updateTrafficLights(t);
+  updateAmbience(t);                                            // feu d'obstacle du gratte-ciel du fond
   updateVehicles(t);                                            // gyrophares de l'ambulance
   updateWind(t, camera);                                        // son du vent (si activé)
 

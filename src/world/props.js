@@ -12,6 +12,8 @@ import { doorGap, paintMat } from './buildings.js';
 import { addSubject, boxAt } from '../game/subjects.js';
 import { MAIN, LEFT, LEFT_END, RIGHT } from './street.js';
 import { brownHouses, BS_ROW_END } from './brownstones.js';
+import { addParkingSign, flushParkingSigns } from './streetSigns.js';
+import { makeNewsBoxTexture, NEWS_BOXES } from '../textures/streetSigns.js';
 
 /* =====================================================================
    7. LAMPADAIRES ORNEMENTAUX, POUBELLES, BOUCHES D'INCENDIE, CONGÈRES
@@ -287,7 +289,10 @@ function furnishStreet(st, sides) {
   for (const s of [-1, 1]) {
     const S = sides[s < 0 ? 0 : 1], [l0, l1] = S.lamps;
     const first = LAMP_Z0 + (s > 0 ? LAMP_PITCH / 2 : 0);
-    for (let z = first + LAMP_PITCH * Math.ceil((l0 - first) / LAMP_PITCH); z < l1; z += LAMP_PITCH) buildLamppost(st, s * (ROAD_HALF + 0.55), z, s);
+    for (let z = first + LAMP_PITCH * Math.ceil((l0 - first) / LAMP_PITCH); z < l1; z += LAMP_PITCH) {
+      buildLamppost(st, s * (ROAD_HALF + 0.55), z, s);
+      if (Math.random() < 0.5) addParkingSign(st, s * (ROAD_HALF + 0.55), z);   // panneau de stationnement (streetSigns.js)
+    }
   }
   for (const s of [-1, 1]) {
     const S = sides[s < 0 ? 0 : 1], [w0, w1] = S.wall;
@@ -327,12 +332,65 @@ furnishStreet(RIGHT, [
   { lamps: [BS_ROW_END + 2, -FACADE_X - 2], wall: [BS_ROW_END + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 7) },
   { lamps: [BS_ROW_END + 2, -FACADE_X - 2], wall: [BS_ROW_END + 0.5, -FACADE_X - 0.5], hydrants: hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 19) },
 ]);
+flushParkingSigns();
 // Poubelles rangées dans les cours anglaises, derrière la grille (une maison sur deux)
 for (const h of brownHouses) {
   if (Math.random() < 0.5 || h.free[1] - h.free[0] < 0.9) continue;
   const n = 1 + (Math.random() < 0.5 ? 1 : 0), z = rnd(h.free[0], h.free[1] - 0.85 * (n - 1));
   for (let k = 0; k < n; k++) buildTrashCan(RIGHT, h.side * (FACADE_X + 0.75), z + k * 0.85, Math.random() * 6);
 }
+/* Boîtes à journaux et boîte aux lettres (demande utilisateur : « l'esprit New York ») : la rangée de
+   distributeurs de couleur au bord du trottoir, tournés vers les passants (noms de journaux inventés),
+   et la boîte aux lettres bleue à dôme sur ses quatre pieds (sans logo). Ensevelies : dôme de neige
+   sur chaque toit, congère au pied de la rangée. */
+// peinture mate (non métallique : sous un ciel de nuit, un métal ne renvoie presque rien) ; la face
+// imprimée garde une très faible lueur propre pour se lire hors des flaques de lumière
+const newsTex = makeNewsBoxTexture(), newsFaceMat = new THREE.MeshStandardMaterial({ map: newsTex, roughness: 0.45, metalness: 0.05, emissiveMap: newsTex, emissive: new THREE.Color(0.16, 0.16, 0.16) });
+const newsColors = NEWS_BOXES.map(([, c]) => paintMat(new THREE.Color(c).getHex(), 0.5, 0.05));
+const mailMat = paintMat(0x1c3578, 0.45, 0.35);
+/** Rangée de n boîtes à journaux le long de la rue (repère de st), au bord du trottoir du côté side, à partir de z0. */
+function buildNewsBoxes(st, side, x, z0, n) {
+  const W = 0.5, face = side;                                   // face avant tournée vers les façades
+  const order = NEWS_BOXES.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, n);
+  order.forEach((k, i) => {
+    const z = z0 + i * (W + 0.06), g = new THREE.Group();
+    const body = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.62, W), newsColors[k])); body.position.y = 0.63; g.add(body);
+    const ped = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.32, 0.3), MAT.metal)); ped.position.y = 0.16; g.add(ped);
+    const lid = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, W + 0.04), newsColors[k])); lid.position.y = 0.97; g.add(lid);
+    // face avant : la case de la planche (UV)
+    const fg = new THREE.PlaneGeometry(W - 0.04, 0.58), uv = fg.attributes.uv;
+    for (let j = 0; j < uv.count; j++) uv.setX(j, (k + uv.getX(j)) / NEWS_BOXES.length);
+    const fm = new THREE.Mesh(fg, newsFaceMat); fm.rotation.y = face > 0 ? Math.PI / 2 : -Math.PI / 2; fm.position.set(face * 0.212, 0.64, 0); g.add(fm);
+    const sn = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snow); sn.scale.set(0.8, 0.4 + Math.random() * 0.25, 0.92); sn.position.y = 0.99; g.add(sn);
+    g.position.set(x, SIDEWALK_H, z); g.rotation.y = (Math.random() - 0.5) * 0.08; st.add(g);
+  });
+  const L = n * (W + 0.06), zc = z0 + (L - W - 0.06) / 2;
+  buildDrift(st, x, SIDEWALK_H, zc, 0.5, L / 2 + 0.2, rnd(0.2, 0.32));
+  st.collider(x, zc, 0.3, L / 2);
+  addContactShadowIn(st, x, zc, 0.55, L / 2 + 0.2, 0.5);
+  addSubject({ label: 'Les distributeurs de journaux sous la neige', value: 0.5, box: st.box(boxAt(x, zc, 0.3, L / 2, SIDEWALK_H, SIDEWALK_H + 1.2)) });
+}
+/** Boîte aux lettres bleue : caisse, dôme, quatre pieds, trappe ; neige sur le dôme. */
+function buildMailbox(st, side, x, z) {
+  const g = new THREE.Group();
+  const body = shadowed(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.72, 0.52), mailMat)); body.position.y = 0.72; g.add(body);
+  const dome = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.5, 18, 1, false, 0, Math.PI), mailMat)); dome.rotation.z = Math.PI / 2; dome.position.y = 1.08; g.add(dome);
+  for (const [a, b] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.36, 0.05), mailMat); leg.position.set(a * 0.21, 0.18, b * 0.22); g.add(leg); }
+  const flap = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.34), MAT.metal); flap.position.set(side * 0.265, 0.98, 0); flap.rotation.z = side * 0.25; g.add(flap);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.12, 0.22), new THREE.MeshStandardMaterial({ color: 0xd8d8d2, roughness: 0.6 })); plate.position.set(side * 0.256, 0.62, 0); g.add(plate);
+  const sn = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 7, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snow); sn.scale.set(0.9, 0.55, 0.95); sn.position.y = 1.2; g.add(sn);
+  g.position.set(x, SIDEWALK_H, z); st.add(g);
+  buildDrift(st, x, SIDEWALK_H, z, 0.42, 0.42, 0.2);
+  st.collider(x, z, 0.32, 0.32);
+  addContactShadowIn(st, x, z, 0.45, 0.45, 0.55);
+  addSubject({ label: 'Une boîte aux lettres ensevelie', value: 0.5, box: st.box(boxAt(x, z, 0.3, 0.3, SIDEWALK_H, SIDEWALK_H + 1.4)) });
+}
+// au coin de la rue principale (trottoir de droite, avant le carrefour), près du départ (trottoir de
+// gauche), et devant la bodega de la rue de gauche, à côté de la bouche de métro
+buildNewsBoxes(MAIN, 1, ROAD_HALF + 0.85, CROSS_Z + FACADE_X + 2.6, 4); buildMailbox(MAIN, 1, ROAD_HALF + 0.85, CROSS_Z + FACADE_X + 5.4);
+buildNewsBoxes(MAIN, -1, -(ROAD_HALF + 0.85), 4.2, 3); buildMailbox(MAIN, -1, -(ROAD_HALF + 0.85), 6.4);
+buildMailbox(LEFT, -1, -(ROAD_HALF + 0.85), -22.9);
+
 /* Sacs-poubelle sous la neige au bord du trottoir (rue de droite, demande utilisateur) : à New York
    les sacs attendent le ramassage en tas contre la bordure, et la tempête les a ensevelis. Sacs noirs
    surtout, quelques sacs de recyclage bleutés ; chacun déformé (bas écrasé, haut noué), un dôme de
