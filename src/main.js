@@ -9,8 +9,10 @@ import './core/environment.js';
 
 // Modules de décor : importés pour leurs effets de bord, dans l'ordre de construction.
 import './world/ground.js';
-import './world/buildings.js';
+import { silhouetteUniforms } from './world/buildings.js';
 import './world/brownstones.js';
+import './world/subway.js';
+import './world/church.js';
 import './world/props.js';
 import { updateVehicles } from './world/vehicles.js';
 import { neonMat, neonZ } from './world/neon.js';
@@ -20,13 +22,16 @@ import './world/park.js';
 import { flickerLights } from './world/lightRegistry.js';
 import { initLightPool, updateLightPool, lightPool, refreshPoolShadows } from './world/lightPool.js';
 import { updateStreetVisibility, streetZones } from './world/street.js';
+import { walkZones } from './world/walkSurface.js';
 
 import { WIND, snowFar, snowMid, updateSnow, updateLampUniforms, updateWindDirection, windState } from './fx/snow.js';
 import { steamMats, updateSteam } from './fx/steam.js';
+import { powderMat, updatePowder, powderState } from './fx/powder.js';
 import { facePass, lens } from './fx/facePass.js';
 import { composer } from './fx/postprocessing.js';
 import { adaptiveRes } from './fx/adaptiveResolution.js';
-import { hud, fwdDir, updatePlayer, keys } from './player/controls.js';
+import { hud, fwdDir, updatePlayer, keys, debugActivate } from './player/controls.js';
+import { updateFootprints } from './fx/footprints.js';
 import { updateWind, windDebug } from './audio/wind.js';
 import { snowBounce } from './world/weathering.js';
 import { updatePhotoGame, afterRenderPhoto, photoDebug } from './game/photoGame.js';
@@ -65,7 +70,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones, windState };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones, windState, walkZones, activate: debugActivate, powder: powderState };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
@@ -106,6 +111,7 @@ window.__blizzard.tick = (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) f
 
 function frame(rawDt, t) {
   const dt = Math.min(rawDt, 0.05);
+  updateFootprints(t);                                          // horloge des traces de pas (posées pendant updatePlayer)
   const speed = updatePlayer(dt);
   updateStreetVisibility(camera);                               // rue de gauche : on ne dessine que ce que l'ouverture du carrefour laisse voir
   if (updatePhotoGame(dt, t, speed)) updateScale();             // viseur / zoom : le champ de vision a changé
@@ -113,7 +119,9 @@ function frame(rawDt, t) {
   updateWindDirection(dt, t); windDir.copy(WIND).normalize();   // le vent tourne : dérive lente et sautes de vent
   updateLampUniforms();
   updateSnow(snowFar, dt, t); updateSnow(snowMid, dt, t);
+  updatePowder(dt, t);                                          // neige soufflée des corniches, paquets qui tombent des branches
   updateSteam(dt);
+  silhouetteUniforms.uTime.value = t;                           // passants derrière les fenêtres allumées
   updateTrafficLights(t);
   updateVehicles(t);                                            // gyrophares de l'ambulance
   updateWind(t, camera);                                        // son du vent (si activé)
@@ -158,7 +166,7 @@ function updateScale() {
   const h = window.innerHeight;
   const s = h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
   for (const sys of [snowFar, snowMid]) { sys.mat.uniforms.uScale.value = s; sys.mat.uniforms.uPixelRatio.value = renderer.getPixelRatio(); }
-  for (const m of steamMats) { m.uniforms.uScale.value = s; m.uniforms.uPixelRatio.value = renderer.getPixelRatio(); }
+  for (const m of [...steamMats, powderMat]) { m.uniforms.uScale.value = s; m.uniforms.uPixelRatio.value = renderer.getPixelRatio(); }
   renderer.getDrawingBufferSize(facePass.uniforms.uBuffer.value);
 }
 // la résolution adaptative change le rapport pixels/écran : taille des flocons et de la

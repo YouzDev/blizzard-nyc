@@ -78,13 +78,22 @@ function areaSnowY(d, zl, s) {
   return SIDEWALK_H + 0.2 + 0.36 * Math.pow(u, 3) * (0.55 + 0.9 * smoothNoise(zl * 0.25 + s * 3, 1.7))
        + 0.12 * Math.exp(-d * 3) + smoothNoise(d * 1.1 + s * 5, zl * 0.7) * 0.08 + smoothNoise(d * 3.2, zl * 3.1) * 0.025;
 }
+/** Bouche de métro (rue de gauche, côté feux, devant la bodega ; repère de la rue de gauche) : trémie
+ *  de l'escalier, de x0 à x1 en travers, de z0 (fond, palier du bas) à z1 (haut des marches, côté
+ *  carrefour). Le sol y plonge sous les marches, sur une marge de 20 cm : la pente des triangles du
+ *  bord reste cachée sous la margelle et le seuil (world/subway.js). */
+export const SUBWAY = { x0: -8.45, x1: -6.75, z0: -31.0, z1: -25.4 };
+function holeAt(st, lx, lz) {
+  const m = 0.2;
+  return st === LEFT && lx > SUBWAY.x0 - m && lx < SUBWAY.x1 + m && lz > SUBWAY.z0 - m && lz < SUBWAY.z1 + m ? -4 : 0;
+}
 /** Hauteur du sol d'une rue, dans son repère (lx, lz), hors raccords de carrefour. */
 function streetGroundY(st, lx, lz) {
   const zl = lz - st.noiseZ0;
   if (Math.abs(lx) < ROAD_HALF) return roadSnowY(lx, zl, st === MAIN);
   const s = lx < 0 ? -1 : 1;
   if (st.area && Math.abs(lx) > FACADE_X) return areaSnowY(Math.abs(lx) - FACADE_X, zl, s);
-  return SIDEWALK_H + walkSnowY(lx - s * (ROAD_HALF + SIDEWALK_W / 2), zl, s);
+  return SIDEWALK_H + walkSnowY(lx - s * (ROAD_HALF + SIDEWALK_W / 2), zl, s) + holeAt(st, lx, lz);
 }
 const leftY = (x, z) => streetGroundY(LEFT, LEFT.lx(x, z), LEFT.lz(x, z));
 const rightY = (x, z) => streetGroundY(RIGHT, RIGHT.lx(x, z), RIGHT.lz(x, z));
@@ -228,7 +237,7 @@ function buildStreetGround(st, spec, chunks = []) {
     const side = s < 0 ? spec.left : spec.right;
     // Trottoir : u = 0 de la texture (neige grise) doit toujours tomber côté rue
     for (const [z0, z1] of cut(...side.walk))
-      strip(SIDEWALK_W + 0.2, z0, z1, 30, 0.22, s < 0, (px, pz, zc) => walkSnowY(px, zc + pz - st.noiseZ0, s), walkMat, s * (ROAD_HALF + SIDEWALK_W / 2), SIDEWALK_H);
+      strip(SIDEWALK_W + 0.2, z0, z1, 30, 0.22, s < 0, (px, pz, zc) => walkSnowY(px, zc + pz - st.noiseZ0, s) + holeAt(st, px + s * (ROAD_HALF + SIDEWALK_W / 2), zc + pz), walkMat, s * (ROAD_HALF + SIDEWALK_W / 2), SIDEWALK_H);
     // Bordure en granit : 22 cm de haut, face côté rue visible (15–20 cm au-dessus de la gadoue)
     for (const [z0, z1] of cut(...side.curb)) {
       const len = z1 - z0, zc = (z0 + z1) / 2;

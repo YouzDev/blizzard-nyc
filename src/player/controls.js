@@ -5,6 +5,7 @@ import { renderer } from '../core/renderer.js';
 import { camera } from '../core/scene.js';
 import { collides, pushOut } from '../world/collisions.js';
 import { curbDistance } from '../world/ground.js';
+import { walkZoneY, walkZoneHit } from '../world/walkSurface.js';
 
 /* =====================================================================
    13. CONTRÔLES FPS : PointerLock (avec repli), ZQSD/WASD, head-bobbing, collisions
@@ -33,6 +34,8 @@ controls.addEventListener('unlock', () => { lastUnlock = performance.now(); if (
    de pause, puis on la reverrouille au retour (appelé depuis un clic ou une touche :
    le navigateur exige un geste de l'utilisateur pour verrouiller). */
 export function playerActive() { return active; }
+/** Tests : marcher sans verrouiller la souris (window.__blizzard.activate(true), puis keys.fwd = true). */
+export function debugActivate(v = true) { active = v; }
 export function setMoveScale(k) { moveScale = k; }                // marche ralentie au viseur
 export function openUi() { uiOpen = true; releaseAll(); active = false; if (document.pointerLockElement) controls.unlock(); }
 export function closeUi(resume = true) {
@@ -84,6 +87,9 @@ controls.addEventListener('unlock', releaseAll);
 const velocity = new THREE.Vector3(), fwdDir = new THREE.Vector3(), rightDir = new THREE.Vector3(), moveDir = new THREE.Vector3(), target = new THREE.Vector3();
 let bobPhase = 0, walkAmount = 0, lastSway = 0;
 export function groundHeightAt(x, z) {
+  // perrons, escalier du métro : leur propre surface (world/walkSurface.js)
+  const wy = walkZoneY(x, z);
+  if (wy !== null) return wy + 0.03;
   // d : distance au bord de chaussée côté trottoir (rue principale : |x| − ROAD_HALF ; rue de
   // gauche et coins du carrefour : voir ground.js)
   const d = curbDistance(x, z), k = THREE.MathUtils.smoothstep(d, -0.3, 0.2);
@@ -97,7 +103,7 @@ export function updatePlayer(dt) {
   moveDir.set(0, 0, 0);
   if (keys.fwd) moveDir.add(fwdDir); if (keys.back) moveDir.sub(fwdDir); if (keys.right) moveDir.add(rightDir); if (keys.left) moveDir.sub(rightDir);
   const wants = moveDir.lengthSq() > 0; if (wants) moveDir.normalize();
-  target.copy(moveDir).multiplyScalar(WALK_SPEED * moveScale);
+  target.copy(moveDir).multiplyScalar(WALK_SPEED * moveScale * (walkZoneHit?.stairs ? 0.62 : 1));   // on ralentit dans les marches
   velocity.lerp(target, 1 - Math.exp(-dt * 8));
   if (!active) velocity.set(0, 0, 0);
   const p = camera.position;
@@ -121,8 +127,20 @@ export function updatePlayer(dt) {
   const sway = Math.sin(bobPhase) * 0.025 * walkAmount;
   p.x += rightDir.x * (sway - lastSway); p.z += rightDir.z * (sway - lastSway); lastSway = sway;
   pushOut(p, PLAYER_RADIUS);                              // le balancement ne peut pas nous mettre dans un obstacle
-  p.y = groundHeightAt(p.x, p.z) + EYE_HEIGHT + bobY;
+  // hauteur des pieds lissée : on monte une marche en ~0,15 s au lieu d'y être téléporté
+  const gy = groundHeightAt(p.x, p.z);
+  footY = footY === null ? gy : footY + (gy - footY) * (1 - Math.exp(-dt * 14));
+  p.y = footY + EYE_HEIGHT + bobY;
+  // un pas = un demi-tour de bobPhase : trace laissée dans la neige (fx/footprints.js)
+  const step = Math.floor(bobPhase / Math.PI);
+  if (step !== lastStep) {
+    lastStep = step;
+    if (walkAmount > 0.35 && speed > 0.4 && onStep) onStep(p.x + rightDir.x * 0.12 * (step % 2 ? 1 : -1), p.z + rightDir.z * 0.12 * (step % 2 ? 1 : -1), Math.atan2(velocity.x, velocity.z), step % 2);
+  }
   return speed;
 }
+let footY = null, lastStep = 0, onStep = null;
+/** Appelé à chaque pas : (x, z, cap, pied 0 | 1). */
+export function setStepHandler(fn) { onStep = fn; }
 
 export { hud, fwdDir };

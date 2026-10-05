@@ -116,7 +116,7 @@ export function updateStreetVisibility(camera) {
     where = 'principale';
     xFarL = F - 2 * F * (cz - farL) / (cz - nearZ);
     xFarR = -F + 2 * F * (cz - farR) / (cz - nearZ);
-  } else if (Math.abs(cx) > F + 0.3 && cz < nearZ) {
+  } else if (Math.abs(cx) > F + 0.3 && cz < nearZ + (cx > 0 ? AREA_W : 0)) {   // (rue de droite : perrons compris)
     where = cx < 0 ? 'gauche' : 'droite';
     zMain = cz + (Math.abs(cx) + F) * (nearZ - cz) / (Math.abs(cx) - F);
   }

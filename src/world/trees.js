@@ -7,6 +7,9 @@ import { groundY } from './ground.js';
 import { addContactShadowIn } from './contactShadows.js';
 import { RIGHT, RIGHT_CHUNKS } from './street.js';
 import { BS_ROW_END } from './brownstones.js';
+import { addPowderTree } from './powderSources.js';
+import { paintMat } from './buildings.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /* =====================================================================
    7 quater. ARBRES (rue de droite et parc)
@@ -107,6 +110,53 @@ function conifer(needles, bark, snow, x, y0, z, h = rnd(9, 15)) {
   }
 }
 
+/* Vélos attachés au garde-corps des fosses d'arbres, oubliés sous la neige (demande utilisateur) :
+   roues à moitié enfouies, neige sur la selle, le cadre, le guidon et le haut des pneus, antivol en U.
+   Repère de la rue de droite, vélo le long de la rue (axe des roues en travers). Géométries
+   fusionnées pour toute la rue : cadres par couleur, pièces noires, neige. */
+const bikeFrames = new Map(), bikeBlack = [], bikeSnow = [];
+const BIKE_COLORS = [0x7a1a16, 0x1d3550, 0x2a2a2a, 0x3b5a3a, 0x8a8a8a, 0xa8742a];
+function bikeTube(list, a, b, r) {
+  const d = new THREE.Vector3().subVectors(b, a), g = new THREE.CylinderGeometry(r, r, d.length(), 6);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize())));
+  g.translate((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2); list.push(g); return g;
+}
+function buildBike(x, z, dir, lean) {
+  const color = BIKE_COLORS[Math.floor(Math.random() * BIKE_COLORS.length)];
+  if (!bikeFrames.has(color)) bikeFrames.set(color, []);
+  const frame = [], black = [], snow = [];
+  const ay = SIDEWALK_H + 0.34 - 0.13, R = 0.34, V = (yy, zz) => new THREE.Vector3(0, yy, zz * dir);   // 13 cm enfouis
+  const rear = V(ay, -0.52), front = V(ay, 0.52), bb = V(ay + 0.02, -0.06), seat = V(ay + 0.58, -0.24), head = V(ay + 0.6, 0.36), headLow = V(ay + 0.44, 0.41);
+  for (const c of [rear, front]) {
+    const tire = new THREE.TorusGeometry(R, 0.024, 6, 28); tire.rotateY(Math.PI / 2); tire.translate(c.x, c.y, c.z); black.push(tire);
+    const rim = new THREE.TorusGeometry(R - 0.03, 0.008, 4, 28); rim.rotateY(Math.PI / 2); rim.translate(c.x, c.y, c.z); frame.push(rim);
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI; bikeTube(frame, c.clone().add(new THREE.Vector3(0, Math.sin(a) * (R - 0.03), Math.cos(a) * (R - 0.03))), c.clone().add(new THREE.Vector3(0, -Math.sin(a) * (R - 0.03), -Math.cos(a) * (R - 0.03))), 0.003); }
+    // neige sur le haut du pneu (arc), petite congère au pied de la roue
+    const arc = 1.7, sn = new THREE.TorusGeometry(R + 0.012, 0.03, 4, 12, arc); sn.rotateZ(Math.PI / 2 - arc / 2); sn.scale(1, 1, 1); sn.rotateY(Math.PI / 2); sn.translate(c.x, c.y + 0.01, c.z); snow.push(sn);
+    const mound = new THREE.SphereGeometry(0.3, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2); mound.scale(0.7, 0.45, 1.1); mound.translate(c.x, SIDEWALK_H + 0.05, c.z); snow.push(mound);
+  }
+  for (const [a, b] of [[bb, seat], [seat, head], [bb, headLow], [bb, rear], [seat, rear], [headLow, head]]) bikeTube(frame, a, b, 0.018);
+  for (const e of [-1, 1]) bikeTube(frame, headLow.clone().add(new THREE.Vector3(e * 0.04, 0, 0)), front.clone().add(new THREE.Vector3(e * 0.04, 0, 0)), 0.012);
+  bikeTube(frame, seat, seat.clone().add(V(0.1, -0.02)), 0.013);
+  bikeTube(frame, head, head.clone().add(V(0.1, -0.03)), 0.014);
+  const bar = head.clone().add(V(0.1, -0.03)), hb = new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6); hb.rotateZ(Math.PI / 2); hb.translate(bar.x, bar.y, bar.z); frame.push(hb);
+  for (const e of [-1, 1]) { const g = new THREE.CylinderGeometry(0.017, 0.017, 0.1, 6); g.rotateZ(Math.PI / 2); g.translate(bar.x + e * 0.22, bar.y, bar.z); black.push(g); }
+  const sad = new THREE.BoxGeometry(0.11, 0.05, 0.25); sad.translate(seat.x, seat.y + 0.12, seat.z - 0.01 * dir); black.push(sad);
+  // antivol en U entre le cadre et le garde-corps de la fosse
+  const lock = new THREE.TorusGeometry(0.08, 0.012, 5, 12, Math.PI); lock.rotateZ(Math.PI); lock.translate(-0.12, ay + 0.3, 0); black.push(lock);
+  // neige : selle, tube horizontal, guidon
+  const s1 = new THREE.BoxGeometry(0.13, 0.05, 0.26); s1.translate(seat.x, seat.y + 0.165, seat.z); snow.push(s1);
+  const top = bikeTube(snow, seat.clone().setY(seat.y + 0.03), head.clone().setY(head.y + 0.03), 0.026); top.scale(1, 1, 1);
+  const s3 = new THREE.CylinderGeometry(0.022, 0.022, 0.46, 5); s3.rotateZ(Math.PI / 2); s3.translate(bar.x, bar.y + 0.025, bar.z); snow.push(s3);
+  // inclinaison contre le garde-corps, pose
+  const m = new THREE.Matrix4().makeRotationZ(lean).setPosition(x, 0, z);
+  for (const g of frame) bikeFrames.get(color).push(g.applyMatrix4(m));
+  for (const g of black) bikeBlack.push(g.applyMatrix4(m));
+  for (const g of snow) bikeSnow.push(g.applyMatrix4(m));
+  RIGHT.collider(x, z, 0.24, 0.95);
+}
+const bikeNI = l => mergeGeometries(l.map(g => g.index ? g.toNonIndexed() : g));
+
 // --- Construction : un lot par tronçon de la rue de droite, plus le parc -----------------------
 const chunkOf = lz => { let k = 0; while (k < RIGHT_CHUNKS.length && lz >= RIGHT_CHUNKS[k]) k++; return k; };
 const lots = new Map();
@@ -117,8 +167,9 @@ const lot = k => { if (!lots.has(k)) lots.set(k, { bark: new TreeBatch(), snow: 
 for (const s of [-1, 1]) {
   const first = LAMP_Z0 + (s > 0 ? LAMP_PITCH / 2 : 0) + LAMP_PITCH / 2;
   for (let z = first + LAMP_PITCH * Math.ceil((BS_ROW_END + 3 - first) / LAMP_PITCH); z < -FACADE_X - 6; z += LAMP_PITCH) {
-    const x = s * (ROAD_HALF + 1.05), L = lot(chunkOf(z));
-    bareTree(L.bark, L.snow, x, SIDEWALK_H + 0.12, z, { height: rnd(10, 13), clear: rnd(2.8, 3.4), depth: 6, spread: rnd(0.9, 1.15) });
+    const x = s * (ROAD_HALF + 1.05), L = lot(chunkOf(z)), h = rnd(10, 13), clear = rnd(2.8, 3.4);
+    bareTree(L.bark, L.snow, x, SIDEWALK_H + 0.12, z, { height: h, clear, depth: 6, spread: rnd(0.9, 1.15) });
+    addPowderTree(RIGHT.toWorld(new THREE.Vector3(x, clear + (h - clear) * 0.5, z)), h * 0.28);   // couronne qui se déleste (fx/powder.js)
     // garde-corps de la fosse (fonte, 4 côtés bas) et sa neige
     for (const [dx, dz, w, d] of [[-0.6, 0, 0.04, 1.24], [0.6, 0, 0.04, 1.24], [0, -0.6, 1.24, 0.04], [0, 0.6, 1.24, 0.04]]) {
       const g = new THREE.Mesh(new THREE.BoxGeometry(w, 0.04, d), MAT.iron); g.position.set(x + dx, SIDEWALK_H + 0.45, z + dz); RIGHT.add(g);
@@ -126,6 +177,8 @@ for (const s of [-1, 1]) {
     }
     RIGHT.collider(x, z, 0.62, 0.62);
     addContactShadowIn(RIGHT, x, z, 0.9, 0.9, 0.45);
+    // un vélo oublié contre le garde-corps, côté façades, une fosse sur trois
+    if (Math.random() < 0.33) { const bx = s * (ROAD_HALF + 1.05 + 0.62 + 0.24); buildBike(bx, z + rnd(-0.3, 0.3), Math.random() < 0.5 ? 1 : -1, -s * 0.1); addContactShadowIn(RIGHT, bx, z, 0.35, 1.0, 0.4); }
   }
 }
 
@@ -136,11 +189,16 @@ export function plantParkTrees(spots) {
     const y0 = groundY(RIGHT.wx(t.x, t.z), RIGHT.wz(t.x, t.z));
     if (t.kind === 'sapin') conifer(L.needles, L.bark, L.snow, t.x, y0, t.z, t.h);
     else bareTree(L.bark, L.snow, t.x, y0, t.z, { height: t.h, clear: rnd(2.5, 4), depth: 6, spread: rnd(1, 1.3) });
+    addPowderTree(RIGHT.toWorld(new THREE.Vector3(t.x, y0 + t.h * 0.55, t.z)), t.h * 0.26);
   }
 }
 
 /** Fusionne les lots (appelé après les arbres du parc). */
 export function flushTrees() {
+  for (const [c, l] of bikeFrames) RIGHT.add(shadowed(new THREE.Mesh(bikeNI(l), paintMat(c, 0.45, 0.5))));
+  if (bikeBlack.length) RIGHT.add(shadowed(new THREE.Mesh(bikeNI(bikeBlack), paintMat(0x0e0e0f, 0.8, 0))));
+  if (bikeSnow.length) { const m = new THREE.Mesh(bikeNI(bikeSnow), MAT.snow); m.receiveShadow = true; RIGHT.add(m); }
+  bikeFrames.clear(); bikeBlack.length = 0; bikeSnow.length = 0;
   for (const L of lots.values()) {
     if (L.bark.count) RIGHT.add(shadowed(new THREE.Mesh(L.bark.geometry(), barkMat)));
     if (L.needles.count) RIGHT.add(shadowed(new THREE.Mesh(L.needles.geometry(), needleMat)));

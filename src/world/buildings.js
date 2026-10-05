@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { FACADE_X, SIDEWALK_H, STREET_Z_MAX, CROSS_Z, LEFT_END_X } from '../core/constants.js';
+import { FACADE_X, SIDEWALK_H, STREET_Z_MAX, CROSS_Z, LEFT_END_X, FOG_DENSITY } from '../core/constants.js';
 import { rnd, smoothNoise } from '../core/noise.js';
 import { brick, stone, winInteriorTex, winDarkTex, shutterTex, lampPaint } from '../textures/index.js';
 import { makeSignTexture, SHOP_NAMES } from '../textures/signs.js';
@@ -15,6 +15,7 @@ import { snowPhoto } from './snowPhoto.js';
 import { addSubject, boxAt } from '../game/subjects.js';
 import { addPointSource } from './lightRegistry.js';
 import { MAIN, LEFT, LEFT_END, LEFT_CHUNKS } from './street.js';
+import { addPowderCornice } from './powderSources.js';
 
 /* =====================================================================
    6. BÂTIMENTS : soubassement en pierre, briques, fenêtres, climatiseurs,
@@ -172,6 +173,7 @@ function buildBuilding(side, z0, depthZ, height, opts) {
   for (let z = z0 + 0.25; z < z0 + depthZ; z += 0.55) worldBox(concGeoms, 0.28, 0.2, 0.25, faceX + ox * 0.3, height - 0.35, z);   // denticules
   worldBox(concGeoms, 0.3, 0.9, depthZ, faceX + ox * 0.0 - ox * 0.15, height + 0.45, cz);                     // parapet
   snowPad(faceX - ox * 0.15, height + 0.9, cz, 0.42, depthZ + 0.1, 0.2);
+  addPowderCornice(ST.toWorld(new THREE.Vector3(faceX + ox * 0.05, height + 1.0, z0 + 0.4)), ST.toWorld(new THREE.Vector3(faceX + ox * 0.05, height + 1.0, z0 + depthZ - 0.4)));   // le vent la soufflera (fx/powder.js)
   snowPad(side * (FACADE_X + width / 2) + ox * 0.15, height, cz, width - 0.6, depthZ - 0.4, 0.3, 0, 1.2);   // toit : invisible depuis la rue, maillage grossier
   const bulk = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.6, 2.8), brickMat)); bulk.position.set(side * (FACADE_X + width / 2) + side * 2, height + 1.3, cz + rnd(-2, 2)); ST.add(bulk);
   snowPad(bulk.position.x, height + 2.6, bulk.position.z, 2.5, 2.9, 0.25);
@@ -197,7 +199,7 @@ function buildBuilding(side, z0, depthZ, height, opts) {
     // Le rez-de-chaussée est commercial d'un pilastre d'angle à l'autre ; au-delà
     // de 9 m on met deux commerces mitoyens, comme sur n'importe quelle avenue.
     const bayW = depthZ - 1.3;
-    const first = { open: opts.storefrontLight, awning: opts.awning, isDeli: opts.isDeli };
+    const first = { open: opts.storefrontLight, awning: opts.awning, isDeli: opts.isDeli, name: opts.shopName, featured: !!opts.shopName };
     if (bayW > 9.2) {
       const w1 = bayW * rnd(0.42, 0.58), w2 = bayW - w1 - 0.6;
       buildStorefront(side, cz - bayW / 2 + w1 / 2, w1, first);
@@ -369,8 +371,9 @@ function buildStorefront(side, zc, w, o) {
   const fx = d => faceX + ox * d;                       // profondeur d devant la façade
   const D = 0.42;                                       // saillie des caissons de vitrine
   const y0 = SIDEWALK_H, yBulk = y0 + 0.62, yGlass = 2.62, yTrans = 3.18, ySign0 = 3.28, ySign1 = 4.08;
-  const name = o.isDeli ? 'DELI GROCERY' : SHOP_NAMES[Math.floor(Math.random() * SHOP_NAMES.length)];
-  const open = !!o.open, signLit = o.isDeli || (open && Math.random() < 0.6);   // rideau baissé = enseigne éteinte
+  const name = o.isDeli ? 'DELI GROCERY' : o.name ?? SHOP_NAMES[Math.floor(Math.random() * SHOP_NAMES.length)];
+  // o.featured : commerce imposé (bodega, laverie de la rue de gauche) — ouvert, enseigne allumée, vitrine un peu plus vive
+  const open = !!o.open, signLit = o.isDeli || (open && (o.featured || Math.random() < 0.6));   // rideau baissé = enseigne éteinte
   const frameMat = paintMat(SHOP_FRAME_COLORS[Math.floor(Math.random() * SHOP_FRAME_COLORS.length)]);
   paintedWood(frameMat, 1, 1);                          // huisseries en bois peint (photo)
   const frame = [], glass = [], iron = [], decalGeoms = { paper: [], neon: [] };
@@ -436,7 +439,7 @@ function buildStorefront(side, zc, w, o) {
       // pièce en fausse 3D derrière la vitre (voir shopInterior.js) : sol, plafond à néons, murs, gondole
       const imat = makeInteriorMaterial(null, kind, L - 0.12, yGlass - yBulk, yBulk - y0);
       imat.uniforms.uWall.value = shopInteriorCache.get(kind);          // après le merge : pas de copie de texture
-      if (!o.isDeli) imat.uniforms.uBright.value = 0.55;                 // le deli reste la vitrine la plus lumineuse
+      if (!o.isDeli) imat.uniforms.uBright.value = o.featured ? 0.72 : 0.55;                 // le deli reste la vitrine la plus lumineuse
       const inner = new THREE.Mesh(new THREE.PlaneGeometry(L - 0.12, yGlass - yBulk), imat);
       inner.position.set(fx(0.05), (yBulk + yGlass) / 2, zm); inner.rotation.y = rotY; ST.add(inner);
       // autocollants en bas de vitrine (1 à 3), plus rarement un néon en hauteur
@@ -455,7 +458,7 @@ function buildStorefront(side, zc, w, o) {
         const z = z1 + 0.35 + dec.size[0] / 2 + Math.random() * Math.max(0, L - 0.7 - dec.size[0]);
         decalGeoms.neon.push(decalGeo(dec, fx(D - 0.045), yGlass - 0.3 - dec.size[1] / 2, z, rotY));
       }
-      const trans = new THREE.Mesh(new THREE.PlaneGeometry(L - 0.12, yTrans - yGlass - 0.14), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 0.72, 0.5).multiplyScalar(o.isDeli ? 1 : 0.6) }));
+      const trans = new THREE.Mesh(new THREE.PlaneGeometry(L - 0.12, yTrans - yGlass - 0.14), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 0.72, 0.5).multiplyScalar(o.isDeli ? 1 : o.featured ? 0.8 : 0.6) }));
       trans.position.set(fx(0.04), (yGlass + yTrans) / 2, zm); trans.rotation.y = rotY; ST.add(trans);
     } else {
       // rideau à lames dans ses coulisses, cadenas au pied
@@ -877,13 +880,21 @@ export function flushChunk() {
     const sh = new THREE.InstancedMesh(winGlassGeo, shadeMats[v], list.length);
     list.forEach((m, i) => sh.setMatrixAt(i, m)); ST.add(sh);
   });
-  const c = new THREE.Color();
+  const c = new THREE.Color(), sil = [];
   litInst.forEach((list, v) => {
     if (!list.length) return;
     const lit = new THREE.InstancedMesh(winGlassGeo, litMats[v], list.length);
-    list.forEach((m, i) => { lit.setMatrixAt(i, m); const k = 0.45 + Math.random() * 0.9; c.setHSL(0.06 + Math.random() * 0.06, 0.4 + Math.random() * 0.3, 0.6).multiplyScalar(k); lit.setColorAt(i, c); });
+    list.forEach((m, i) => { lit.setMatrixAt(i, m); const k = 0.45 + Math.random() * 0.9; c.setHSL(0.06 + Math.random() * 0.06, 0.4 + Math.random() * 0.3, 0.6).multiplyScalar(k); lit.setColorAt(i, c); if (Math.random() < 0.16) sil.push(m); });
     ST.add(lit);
   });
+  // quelqu'un passe derrière une fenêtre allumée sur six (voir silhouetteMat)
+  if (sil.length) {
+    const g = winGlassGeo.clone(), seeds = new Float32Array(sil.length).map(() => Math.random());
+    g.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
+    const mesh = new THREE.InstancedMesh(g, silhouetteMat, sil.length), off = new THREE.Matrix4().makeTranslation(0, 0, 0.006);
+    sil.forEach((m, i) => mesh.setMatrixAt(i, m.clone().multiply(off)));    // juste devant l'intérieur allumé, derrière le cadre
+    ST.add(mesh);
+  }
   // pierre reconstituée photo (tuile de 2,7 m ; UV worldBox en tuiles de 5,5 m) pour linteaux, appuis, corniches…
   if (concGeoms.length) { const cm = weather(MAT.concrete.clone(), { strength: 0.75, frame: ST.frame, warm: ST.warm }); usePhoto(cm, 'concrete_wall_008', 5.5 / 2.7, 5.5 / 2.7); ST.add(shadowed(new THREE.Mesh(mergeGeometries(concGeoms), cm))); }
   flushSnowPads(0);   // filet : tout est normalement déjà fusionné immeuble par immeuble
@@ -896,6 +907,54 @@ export function flushChunk() {
   resetAccumulators();
 }
 export function endStreet() { flushChunk(); ST = null; }
+
+/* Silhouettes derrière les fenêtres allumées (demande utilisateur) : une ombre floue — derrière le
+   rideau ou au fond de la pièce — entre par un côté, s'arrête un moment (léger balancement), repart
+   par l'autre, puis la fenêtre reste vide jusqu'au cycle suivant (25 à 75 s, propre à chaque
+   fenêtre). Tout est dans le shader (temps, graine par instance) ; tailles en MÈTRES, tirées de
+   l'échelle de l'instance : la personne garde ses proportions dans une haute fenêtre de parlor floor. */
+export const silhouetteUniforms = { uTime: { value: 0 }, uFogDensity: { value: FOG_DENSITY } };
+const silhouetteMat = new THREE.ShaderMaterial({
+  uniforms: silhouetteUniforms, transparent: true, depthWrite: false,
+  vertexShader: `
+    attribute float aSeed;
+    uniform float uFogDensity;
+    varying vec2 vP; varying vec2 vSize; varying float vSeed, vFog;
+    void main(){
+      vSize = vec2(${(WIN_W - 0.1).toFixed(2)} * length(instanceMatrix[0].xyz), ${(WIN_H - 0.1).toFixed(2)} * length(instanceMatrix[1].xyz));
+      vP = vec2((uv.x - 0.5) * vSize.x, uv.y * vSize.y);                 // mètres : centre de l'appui = (0, 0)
+      vSeed = aSeed;
+      vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+      vFog = exp(-uFogDensity * uFogDensity * mv.z * mv.z);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform float uTime;
+    varying vec2 vP; varying vec2 vSize; varying float vSeed, vFog;
+    float sdBox(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
+    void main(){
+      float P = mix(25.0, 75.0, fract(vSeed * 7.13)), T = fract(uTime / P + vSeed) * P;
+      float dir = vSeed > 0.5 ? 1.0 : -1.0, W = vSize.x;
+      float walkIn = 2.6 + fract(vSeed * 11.0), stay = mix(2.0, 15.0, fract(vSeed * 3.7)), walkOut = 2.4 + fract(vSeed * 13.0);
+      float xs = -dir * (W * 0.5 + 0.4), xm = (fract(vSeed * 5.3) - 0.5) * W * 0.55, xe = dir * (W * 0.5 + 0.4);
+      float x, walking = 0.0;
+      if (T < walkIn) { x = mix(xs, xm, smoothstep(0.0, walkIn, T)); walking = 1.0; }
+      else if (T < walkIn + stay) x = xm + 0.05 * sin(T * 0.7 + vSeed * 20.0);
+      else if (T < walkIn + stay + walkOut) { x = mix(xm, xe, smoothstep(0.0, walkOut, T - walkIn - stay)); walking = 1.0; }
+      else discard;
+      // plancher de la pièce sous l'appui (~0,8 m ; moins sous une haute fenêtre), un peu au fond : plus petit
+      float s = mix(1.0, 1.15, fract(vSeed * 17.0));                    // tout près de la vitre : un peu plus grand
+      vec2 p = vec2(vP.x - x, vP.y + clamp(0.7 - (vSize.y - 1.8) * 0.55, 0.25, 0.8) * s) / s;
+      p.y -= walking * 0.02 * abs(sin(T * 5.5));                       // le pas
+      float head = length(p - vec2(0.0, 1.6)) - 0.105;
+      float body = sdBox(p - vec2(0.0, 1.05), vec2(0.21, 0.4), 0.11);
+      float neck = sdBox(p - vec2(0.0, 1.47), vec2(0.05, 0.06), 0.02);
+      float d = min(min(head, body), neck);
+      float a = (1.0 - smoothstep(-0.03, 0.06, d)) * 0.88 * vFog;     // floue : derrière le voilage
+      if (a < 0.01) discard;
+      gl_FragColor = vec4(0.035, 0.025, 0.02, a);
+    }`,
+});
 
 // Matériaux partagés par toutes les rues : vitres à store / rideaux, intérieurs allumés, fonte des escaliers
 const shadeMats = winDarkTex.map(map => new THREE.MeshStandardMaterial({ map, roughness: 0.3, metalness: 0, envMapIntensity: 1.4 }));
@@ -924,13 +983,16 @@ endStreet();
    principale ; côté +1 (en face) jusqu'au droit des façades de droite de la rue principale :
    il ferme le carrefour en T. Un peu plus commerçante que le côté droit de la rue principale. */
 beginStreet(LEFT, 1, LEFT_CHUNKS);
-buildRow(-1, LEFT_END_X, -(FACADE_X + 14.5), 0.4);
-buildRow(1, LEFT_END_X, FACADE_X, 0.35);
+// Son identité (demande utilisateur) : une BODEGA allumée à l'angle côté feux — devant elle, la bouche
+// de métro (world/subway.js) — et une LAVERIE ouverte en face, visibles depuis le carrefour.
+const LEFT_CORNER = -(FACADE_X + 14.5);
+let laundromat = false;
+buildRow(-1, LEFT_END_X, LEFT_CORNER, 0.4, (z, d) => (z + d > LEFT_CORNER - 0.6
+  ? { storefront: true, storefrontLight: true, awning: true, shopName: 'BODEGA', fireEscape: true } : {}));
+buildRow(1, LEFT_END_X, FACADE_X, 0.35, (z, d) => {
+  if (laundromat || z + d < -36 || z > -24) return {};
+  laundromat = true; return { storefront: true, storefrontLight: true, awning: Math.random() < 0.5, shopName: 'LAUNDROMAT' };
+});
 endStreet();
 
-/* Fond de la rue de gauche : deux immeubles d'habitation en travers (impasse), sans perron ni
-   boutique : la chaussée arrive au pied des façades, sous la neige repoussée par les
-   chasse-neige ; une porte de plain-pied et sa lanterne chacun, la neige dégagée devant. */
-beginStreet(LEFT_END, 0);
-buildRow(-1, CROSS_Z - FACADE_X, CROSS_Z + FACADE_X, 0, (z, d) => ({ storefront: false, stoop: false, gradeDoor: true, stoopOffset: rnd(-1, 1) * (d / 2 - 2.5) }));
-endStreet();
+// Fond de la rue de gauche : l'église (world/church.js).

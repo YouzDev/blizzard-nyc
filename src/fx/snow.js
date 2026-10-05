@@ -10,10 +10,11 @@ import { lampPositions } from '../world/lightRegistry.js';
    11. BLIZZARD : flocons éclairés par les lampadaires (shader personnalisé)
    ===================================================================== */
 export const WIND = new THREE.Vector3(1.4, 0, 3.6);
-const N_LAMPS = 12;
+export const N_LAMPS = 12;
 // on ne garde que les lampes proches du joueur (mises à jour à chaque frame)
-const lampPosArr = new Array(N_LAMPS).fill(0).map(() => new THREE.Vector3(0, -100, 0));
-const lampColArr = new Array(N_LAMPS).fill(0).map(() => new THREE.Color(0, 0, 0));
+// (exportés : la neige soufflée des corniches et des branches, fx/powder.js, s'éclaire pareil)
+export const lampPosArr = new Array(N_LAMPS).fill(0).map(() => new THREE.Vector3(0, -100, 0));
+export const lampColArr = new Array(N_LAMPS).fill(0).map(() => new THREE.Color(0, 0, 0));
 
 const snowUniforms = {
   uMap: { value: flakeTex }, uTime: { value: 0 }, uPixelRatio: { value: renderer.getPixelRatio() },

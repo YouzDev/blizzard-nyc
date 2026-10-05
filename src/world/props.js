@@ -8,7 +8,7 @@ import { MAT } from './materials.js';
 import { shadowed } from './collisions.js';
 import { flickerLights, lampPositions, addPointSource, addSpotSource } from './lightRegistry.js';
 import { addContactShadowIn } from './contactShadows.js';
-import { doorGap } from './buildings.js';
+import { doorGap, paintMat } from './buildings.js';
 import { addSubject, boxAt } from '../game/subjects.js';
 import { MAIN, LEFT, LEFT_END, RIGHT } from './street.js';
 import { brownHouses, BS_ROW_END } from './brownstones.js';
@@ -333,6 +333,52 @@ for (const h of brownHouses) {
   const n = 1 + (Math.random() < 0.5 ? 1 : 0), z = rnd(h.free[0], h.free[1] - 0.85 * (n - 1));
   for (let k = 0; k < n; k++) buildTrashCan(RIGHT, h.side * (FACADE_X + 0.75), z + k * 0.85, Math.random() * 6);
 }
+/* Sacs-poubelle sous la neige au bord du trottoir (rue de droite, demande utilisateur) : à New York
+   les sacs attendent le ramassage en tas contre la bordure, et la tempête les a ensevelis. Sacs noirs
+   surtout, quelques sacs de recyclage bleutés ; chacun déformé (bas écrasé, haut noué), un dôme de
+   neige dessus, une congère autour du tas. Entre les lampadaires et les arbres, jamais devant une
+   bouche d'incendie. Fusionnés par couleur pour toute la rue. */
+const bagGeoms = new Map(), bagSnow = [];
+function bagGeo(r, seed) {
+  const g = new THREE.IcosahedronGeometry(1, 2), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = 1 + (smoothNoise(x * 2.2 + seed, z * 2.2 + y) - 0.5) * 0.35;           // plis du plastique
+    y = y < 0 ? y * 0.45 : y * (1 + 0.25 * Math.max(0, 1 - Math.hypot(x, z) * 1.6)); // posé (bas écrasé), haut pincé
+    p.setXYZ(i, x * k * r, (y + 0.45) * k * r * 0.8, z * k * r);
+  }
+  g.computeVertexNormals(); return g;
+}
+function buildBagHeap(st, x, z, len) {
+  const n = Math.max(2, Math.round(len / 0.42));
+  for (let k = 0; k < n; k++) {
+    const r = rnd(0.24, 0.34), color = Math.random() < 0.8 ? 0x0b0b0d : Math.random() < 0.5 ? 0x4c6a86 : 0x1e2a20;
+    const bx = x + rnd(-0.18, 0.18), bz = z - len / 2 + (k + 0.5) * len / n + rnd(-0.08, 0.08), by = SIDEWALK_H + 0.02 + (k % 3 === 1 ? 0.2 : 0);
+    const rot = new THREE.Matrix4().makeRotationY(Math.random() * 6.28).setPosition(bx, by, bz), seed = Math.random() * 40;
+    if (!bagGeoms.has(color)) bagGeoms.set(color, []);
+    bagGeoms.get(color).push(bagGeo(r, seed).applyMatrix4(rot));
+    const knot = new THREE.ConeGeometry(0.05, 0.12, 6); knot.translate(0, r * 1.45, 0); bagGeoms.get(color).push(knot.applyMatrix4(rot).toNonIndexed());
+    // dôme de neige sur le dessus du sac
+    const cap = new THREE.SphereGeometry(r * 0.92, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2.4); cap.scale(1, 0.55, 1); cap.translate(0, r * 0.75, 0); bagSnow.push(cap.applyMatrix4(rot));
+  }
+  buildDrift(st, x, SIDEWALK_H, z, 0.62, len / 2 + 0.3, rnd(0.18, 0.3));
+  st.collider(x, z, 0.45, len / 2 + 0.15);
+  addContactShadowIn(st, x, z, 0.7, len / 2 + 0.35, 0.55);
+}
+{
+  const hyd = [...hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 7), ...hydrantsEvery(BS_ROW_END, -FACADE_X - 4, 19)];
+  for (const s of [-1, 1]) {
+    const first = LAMP_Z0 + (s > 0 ? LAMP_PITCH / 2 : 0);
+    for (let z = first + LAMP_PITCH * Math.ceil((BS_ROW_END - first) / LAMP_PITCH); z < -FACADE_X; z += LAMP_PITCH) for (const q of [0.25, 0.75]) {
+      const zb = z + q * LAMP_PITCH, len = rnd(1.0, 2.2);
+      if (Math.random() > 0.42 || zb - len / 2 < BS_ROW_END + 2 || zb + len / 2 > -FACADE_X - 3 || hyd.some(h => Math.abs(h - zb) < len / 2 + 1)) continue;
+      buildBagHeap(RIGHT, s * (ROAD_HALF + 0.78), zb, len);
+    }
+  }
+  for (const [c, l] of bagGeoms) RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(l.map(g => g.index ? g.toNonIndexed() : g)), paintMat(c, 0.3, 0))));
+  if (bagSnow.length) { const m = new THREE.Mesh(mergeGeometries(bagSnow.map(g => g.index ? g.toNonIndexed() : g)), MAT.snow); m.receiveShadow = true; RIGHT.add(m); }
+}
+
 // Fond de l'impasse : la neige que les chasse-neige ont poussée contre les façades, une
 // longue congère d'un trottoir à l'autre (la chaussée arrive au pied des immeubles).
 for (let lx = -FACADE_X + 0.6; lx < FACADE_X - 0.4; lx += rnd(1.3, 2.1)) {

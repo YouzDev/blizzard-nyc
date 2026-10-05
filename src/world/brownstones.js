@@ -11,6 +11,8 @@ import { weather } from './weathering.js';
 import { addSubject, boxAt } from '../game/subjects.js';
 import { addPointSource } from './lightRegistry.js';
 import { RIGHT, RIGHT_CHUNKS } from './street.js';
+import { addWalkZone } from './walkSurface.js';
+import { addPowderCornice } from './powderSources.js';
 import { WIN_W, WIN_H, entranceMats, doorMaterial, stileUV, snowPad, flushSnowPads, buildEntrance, beginStreet, endStreet, flushChunk, paintMat, PHOTO_WHITE, frameInst, litInst, darkInst, shadeInst  , fenceGeoms, snowGeoms } from './buildings.js';
 
 /* =====================================================================
@@ -246,6 +248,18 @@ function bsStoop(side, fx, zd, sty, face, pairDir = 0) {
     snowPad(X(0.6), yP + 0.55, zd + e * (STOOP_W / 2 - 0.3), 0.46, 0.46, 0.16);
   }
   RIGHT.doorZones.push({ side, z0: zd - STOOP_W / 2 - 0.5, z1: zd + STOOP_W / 2 + 0.5 });
+  // On monte sur le perron (demande utilisateur) : surface praticable marche par marche, neige comprise
+  // (un perron déblayé n'en garde qu'une pellicule au milieu)
+  {
+    const snow = shoveled ? 0.03 : 0.12, hw = STOOP_W / 2 - 0.05;
+    const a = RIGHT.toWorld(V(0, 0, zd - hw)), b = RIGHT.toWorld(V(AREA_W + 0.02, 0, zd + hw));
+    addWalkZone({ x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), z0: Math.min(a.z, b.z), z1: Math.max(a.z, b.z), stairs: true, y: (x, z) => {
+      const d = (RIGHT.lx(x, z) - fx) * ox;
+      if (d < 0 || d > AREA_W + 0.02) return null;
+      if (d > front) return SIDEWALK_H + 0.1;                          // allée d'un perron bas
+      return SIDEWALK_H + (Math.min(n - 1, Math.floor((front - d) / STOOP_TREAD)) + 1) * STOOP_RISE + snow;
+    } });
+  }
   addSubject({ label: 'Un perron de brownstone sous la neige', value: 0.7, box: RIGHT.box(boxAt(X(AREA_W / 2), zd, AREA_W / 2 + 0.1, STOOP_W / 2 + 0.25, SIDEWALK_H, yP + 3.4)) });
   return rails;
 }
@@ -328,7 +342,8 @@ function bsFlushDecor() {
   for (const [c, l] of bsBalls) RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(l), paintMat(c, 0.22, 0.65)), false, true));
   if (bsBows.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsBows), paintMat(0x9a0d0d, 0.55, 0.05)));
   if (bsCandles.length) RIGHT.add(new THREE.Mesh(mergeGeometries(bsCandles), paintMat(0xe6e1d6, 0.6, 0)));
-  bsGarland = []; bsBulbs = new Map(); bsBalls = new Map(); bsBows = []; bsCandles = [];
+  for (const [c, l] of bsPlanters) RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(l), paintMat(c, 0.6, 0.2)), true, true));
+  bsGarland = []; bsBulbs = new Map(); bsBalls = new Map(); bsBows = []; bsCandles = []; bsPlanters = new Map();
 }
 const bsPick = list => list[Math.floor(Math.random() * list.length)];
 function bsBulb(p, col, r = 0.032) {
@@ -434,7 +449,7 @@ function bsDecorate(side, X, h) {
     }
   }
   // parfois un sapin illuminé dans la cour, parfois des stalactites lumineuses sous le bandeau
-  if (Math.random() < 0.3 && h.free[1] - h.free[0] > 1.2) bsLitTree(X(1.3), SIDEWALK_H + 0.25, (h.free[0] + h.free[1]) / 2, 1.7, kit, false);
+  if (Math.random() < 0.3 && h.free[1] - h.free[0] > 1.2) bsLitTree(X(h.bow ? 2.45 : 1.3), SIDEWALK_H + 0.25, (h.free[0] + h.free[1]) / 2, 1.7, kit, false);
   if (Math.random() < 0.3) for (let z = h.za + 0.2; z < h.zb - 0.2; z += 0.14) {
     if (Math.abs(z - h.zd) < 1.15) continue;                                     // le perron
     const k = 2 + Math.floor(Math.random() * 4);
@@ -489,7 +504,10 @@ function buildTerrace(side, z0, n, W, sty) {
   for (let i = 0; i < n; i++) {
     const za = z0 + i * W, doorEnd = i % 2 === 0, bays = [W / 6, W / 2, 5 * W / 6].map(u => za + u), doorBay = doorEnd ? 2 : 0, zd = bays[doorBay];
     const wins = [];                                              // fenêtres de la maison (décorations)
+    // jardinières enneigées sur les appuis (une maison sur trois environ, pas sur les bow-windows)
+    const planter = !sty.bow && Math.random() < 0.38 ? bsPick(BS_PLANTERS) : null;
     bays.forEach((zb, b) => {
+      if (sty.bow && b !== doorBay) return;                       // ces deux travées sont dans le bow-window
       // rez-de-jardin : fenêtres à moitié dans la neige de la cour, derrière une grille
       if (b !== doorBay) {
         const w = 1.05, y1 = Math.min(1.5, yP - 0.4), y0 = Math.min(0.42, y1 - 0.5);
@@ -501,6 +519,7 @@ function buildTerrace(side, z0, n, W, sty) {
         holesF.push({ z0: zb - wp / 2, z1: zb + wp / 2, y0: p0, y1: p1 }); bsWindow(side, xB, p0, p1, zb, wp, 0.38, 0.4);
         wins.push({ z: zb, y0: p0, y1: p1, w: wp, parlor: true });
         bsSill(face, X, p0, zb, wp); bsParlorHood(face, X, p1, zb, wp, sty.hood);
+        if (planter) bsPlanter(X, p0, zb, wp, planter);
       }
       // étages : trois fenêtres alignées sur les travées, la dernière plus basse
       for (let j = 0; j < sty.floors; j++) {
@@ -508,6 +527,7 @@ function buildTerrace(side, z0, n, W, sty) {
         holesF.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.3, 0.45);
         wins.push({ z: zb, y0, y1, w, parlor: false });
         bsSill(face, X, y0, zb, w);
+        if (planter && j === 0 && b !== doorBay) bsPlanter(X, y0, zb, w, planter);
         if (sty.hood === 'segment') { bsParlorHood(face, X, y1, zb, w, 'segment'); continue; }   // frontons cintrés à tous les étages
         bsBox(face, 0.06, 0.12, w + 0.2, X(0.03), y1 + 0.06, zb);                                 // frise
         bsBox(face, 0.2, 0.16, w + 0.44, X(0.1), y1 + 0.2, zb);                                   // larmier
@@ -515,6 +535,11 @@ function buildTerrace(side, z0, n, W, sty) {
         snowPad(X(0.1), y1 + 0.28, zb, 0.2, w + 0.4, 0.1);
       }
     });
+    if (sty.bow) {                                                 // bow-window sur les deux travées sans porte
+      const gap = sty.door === 'arch' ? 1.45 : 1.28;
+      if (doorEnd) bsBowWindow(side, X, za + 0.3, zd - gap, yP, y2, yTop, sty, face, base);
+      else bsBowWindow(side, X, zd + gap, za + W - 0.3, yP, y2, yTop, sty, face, base);
+    }
     // porte du parlor floor : entrée complète (encadrement en grès, lanterne loin du voisin)
     let door = { yWreath: yP + 1.55, xWreath: X(0.12), arch: false, half: 0.95, top: yP + 3.05 };
     if (sty.door === 'arch') {
@@ -523,11 +548,14 @@ function buildTerrace(side, z0, n, W, sty) {
       door = d;
     } else buildEntrance(side, zd, yP, { faceX: fx, trim: face, lanternSide: doorEnd ? -1 : 1 });
     const rails = bsStoop(side, fx, zd, sty, face, doorEnd ? 1 : -1);
+    // cour anglaise fermée de part et d'autre du couloir du perron (on ne descend pas dans la cour)
+    const cw = STOOP_W / 2 - 0.12;
+    for (const [b0, b1] of [[za, zd - cw], [zd + cw, za + W]]) if (b1 - b0 > 0.01) RIGHT.collider(side * (FACADE_X + AREA_W / 2), (b0 + b1) / 2, AREA_W / 2, (b1 - b0) / 2);
     // grille de la cour : interrompue au pied du perron ; séparations entre cours (sauf entre perrons appariés)
     const s0 = zd - STOOP_W / 2 - 0.02, s1 = zd + STOOP_W / 2 + 0.02;
     bsFence(side, za, s0); bsFence(side, s1, za + W);
     const free = doorEnd ? [za + 0.4, s0 - 0.3] : [s1 + 0.3, za + W - 0.4];
-    if (Math.random() < 0.38) bsDecorate(side, X, { zd, yP, rails, fences: [[za, s0], [s1, za + W]], door, wins, za, zb: za + W, free });
+    if (Math.random() < 0.38) bsDecorate(side, X, { zd, yP, rails, fences: [[za, s0], [s1, za + W]], door, wins, za, zb: za + W, free, bow: sty.bow });
     if (!doorEnd || i === 0) bsPartition(side, za + 0.02);
     if (i === n - 1) bsPartition(side, za + W - 0.02);
     // cheminée sur le mur mitoyen
@@ -549,6 +577,7 @@ function buildTerrace(side, z0, n, W, sty) {
   }
   for (let z = z0 + 0.35; z < z0 + L - 0.2; z += 0.38) bsBox(corn, 0.42, 0.07, 0.09, X(0.33), yTop + 0.9, z);
   snowPad(X(0.39), yTop + 1.13, zc, 0.78, L + 0.26, 0.28);
+  addPowderCornice(RIGHT.toWorld(new THREE.Vector3(X(0.7), yTop + 1.3, z0 + 0.3)), RIGHT.toWorld(new THREE.Vector3(X(0.7), yTop + 1.3, z0 + L - 0.3)));
   snowPad(bodyX + ox * 0.3, yTop + 1, zc, BS_DEPTH - 0.8, L - 0.3, 0.32, 0, 1.2);               // toit : invisible de la rue, maillage grossier
 
   // matériaux de la terrace : grès lisse (même programme que la brique) et grès refendu (soubassements)
@@ -560,6 +589,70 @@ function buildTerrace(side, z0, n, W, sty) {
   RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(face.map(g => g.index ? g.toNonIndexed() : g)), faceMat)));
   RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(base), baseMat)));
   flushSnowPads(snowStart);
+}
+/* BOW-WINDOW arrondi (photo Renaissance de l'utilisateur) : une avancée en arc de cercle, du
+   rez-de-jardin jusque sous la corniche, sur les deux travées sans porte. 5 pans droits (l'arc est
+   tendu de zA à zB, saillie BS_BOW) : fenêtres sur les 3 pans du milieu à chaque niveau (mêmes
+   instances que les autres, tournées avec leur pan), appuis et larmiers enneigés, colonnettes aux
+   angles, bandeaux d'étage et chapeau sous la corniche. Chaque pan est construit comme une petite
+   façade plate (x = ox · profondeur, z le long du pan) puis tourné et posé sur la corde de son arc. */
+const BS_BOW = 0.95, bsBowM = new THREE.Matrix4(), bsBowQ = new THREE.Quaternion(), bsBowP = new THREE.Vector3(), bsBowY = new THREE.Vector3(0, 1, 0);
+function bsBowWindow(side, X, zA, zB, yP, y2, yTop, sty, face, base) {
+  const ox = -side, hw = (zB - zA) / 2, zm = (zA + zB) / 2, R = (hw * hw + BS_BOW * BS_BOW) / (2 * BS_BOW), dc = BS_BOW - R, a0 = Math.asin(hw / R), NF = 5;
+  const ang = k => -a0 + 2 * a0 * k / NF, P = k => ({ d: dc + R * Math.cos(ang(k)), z: zm + R * Math.sin(ang(k)) });
+  const ySplit = yP - 0.32;                                       // grès refendu en dessous, grès lisse au-dessus
+  const levels = [{ y0: Math.min(0.45, yP - 0.95), y1: Math.min(1.5, yP - 0.45), w: 0.85, lit: 0.25, shade: 0.45 },
+    { y0: yP + 0.35, y1: yP + 3.0, w: 1.05, lit: 0.4, shade: 0.4 }];
+  for (let j = 0; j < sty.floors; j++) { const y0 = y2 + j * UPPER_H + 0.75; levels.push({ y0, y1: y0 + (j === sty.floors - 1 ? 1.7 : 2.0), w: 1.0, lit: 0.3, shade: 0.45 }); }
+  const place = (g, list, tile) => { g.applyMatrix4(bsBowM); bsPlace(list, g, tile); };
+  const at = (ld, y) => bsBowP.set(ox * ld, y, 0).applyMatrix4(bsBowM);
+  const m = new THREE.Matrix4(), qg = new THREE.Quaternion();
+  for (let k = 0; k < NF; k++) {
+    const A = P(k), B = P(k + 1), psi = side * ang(k + 0.5), fw = Math.hypot(B.d - A.d, B.z - A.z);
+    bsBowM.makeRotationY(psi).setPosition(X((A.d + B.d) / 2), 0, (A.z + B.z) / 2); bsBowQ.setFromAxisAngle(bsBowY, psi);
+    const up = [], low = [];
+    if (k >= 1 && k <= 3) for (const L of levels) {
+      const w = Math.min(L.w, fw - 0.34), h = L.y1 - L.y0, wy = (L.y0 + L.y1) / 2;
+      (L.y1 < ySplit ? low : up).push({ z0: -w / 2, z1: w / 2, y0: L.y0, y1: L.y1 });
+      m.compose(at(-BS_REC + 0.06, wy), bsBowQ, new THREE.Vector3(1, h / WIN_H, w / WIN_W)); frameInst.push(m.clone());
+      qg.copy(bsBowQ).multiply(bsQ[side < 0 ? 0 : 1]);
+      m.compose(at(-BS_REC + 0.02, wy), qg, new THREE.Vector3(w / WIN_W, h / WIN_H, 1));
+      const r = Math.random();
+      if (r < L.lit) litInst[Math.floor(Math.random() * 3)].push(m.clone()); else if (r < L.lit + L.shade) shadeInst[Math.floor(Math.random() * 3)].push(m.clone()); else darkInst.push(m.clone());
+      // appui, larmier, neige
+      place(new THREE.BoxGeometry(BS_REC + 0.14, 0.12, w + 0.3).translate(ox * (0.14 - BS_REC) / 2, L.y0 - 0.06, 0), L.y1 < ySplit ? base : face, L.y1 < ySplit ? 5 : 5.5);
+      let p = at(-0.08, L.y0); snowPad(p.x, p.y, p.z, 0.42, w + 0.26, 0.1, 0, 0.18, psi);
+      place(new THREE.BoxGeometry(0.2, 0.16, w + 0.36).translate(ox * 0.1, L.y1 + 0.15, 0), L.y1 < ySplit ? base : face, L.y1 < ySplit ? 5 : 5.5);
+      p = at(0.1, L.y1 + 0.23); snowPad(p.x, p.y, p.z, 0.2, w + 0.3, 0.09, 0, 0.18, psi);
+    }
+    const tf = [], tb = [];
+    bsFrontLayer(tf, ox * (-BS_REC / 2), -fw / 2, fw / 2, ySplit, yTop, up);
+    bsFrontLayer(tb, ox * (-BS_REC / 2), -fw / 2, fw / 2, -0.6, ySplit, low, 5);
+    for (const g of tf) place(g, face); for (const g of tb) place(g, base, 5);
+    // bandeau du parlor floor, cordon d'étage, chapeau sous la corniche (neige)
+    for (const [d, hh, y, sn] of [[0.16, 0.3, yP - 0.17, 0.08], [0.1, 0.16, y2 - 0.05, 0], [0.5, 0.28, yTop - 0.14, 0.14]]) {
+      place(new THREE.BoxGeometry(d, hh, fw + 0.12).translate(ox * d / 2, y, 0), face);
+      if (sn) { const p = at(d / 2, y + hh / 2); snowPad(p.x, p.y, p.z, d, fw + 0.1, sn, 0, 0.18, psi); }
+    }
+  }
+  for (let k = 0; k <= NF; k++) {                                 // colonnettes aux angles des pans
+    const A = P(k), g = new THREE.CylinderGeometry(0.12, 0.12, yTop + 0.6, 10); g.translate(X(A.d - 0.05), (yTop - 0.6) / 2, A.z); bsPlace(face, g);
+  }
+}
+/* Jardinières sur les appuis : caisse peinte (ou de cuivre vert-de-gris), un dôme de neige, quelques
+   branches de sapin et des tiges sèches qui en sortent. */
+const BS_PLANTERS = [0x1f3324, 0x141414, 0x5a2a1a, 0x3a5a52];
+let bsPlanters = new Map();
+function bsPlanter(X, y0, zb, w, color) {
+  if (!bsPlanters.has(color)) bsPlanters.set(color, []);
+  const L = w - 0.05, g = new THREE.BoxGeometry(0.26, 0.24, L); g.translate(X(0.02), y0 + 0.12, zb); bsPlanters.get(color).push(g);
+  const lip = new THREE.BoxGeometry(0.3, 0.035, L + 0.04); lip.translate(X(0.02), y0 + 0.235, zb); bsPlanters.get(color).push(lip);
+  for (let k = 0; k < Math.round(L / 0.16); k++) {
+    const z = zb - L / 2 + 0.08 + k * 0.16 + (Math.random() - 0.5) * 0.05, h = 0.14 + Math.random() * 0.22;
+    const c = new THREE.ConeGeometry(0.05 + Math.random() * 0.04, h, 5); c.rotateX((Math.random() - 0.5) * 0.6); c.rotateZ((Math.random() - 0.5) * 0.6);
+    c.translate(X(0.02 + (Math.random() - 0.5) * 0.1), y0 + 0.26 + h / 2, z); bsGarland.push(c);
+  }
+  snowPad(X(0.02), y0 + 0.25, zb, 0.3, L + 0.02, 0.09);
 }
 function bsSill(list, X, y0, zb, w) {
   bsBox(list, BS_REC + 0.14, 0.12, w + 0.3, X((0.14 - BS_REC) / 2), y0 - 0.06, zb);
@@ -595,7 +688,8 @@ function buildBrownRow(side, zFrom, zTo) {
     const R = zTo - z;
     let n = 2 + Math.floor(Math.random() * 4), W = rnd(6.0, 6.9);
     if (R - n * W < 12.2) { n = Math.max(1, Math.round(R / 6.5)); W = R / n; }   // dernière terrace : elle prend le reste
-    const sty = { ...BS_STYLES[Math.floor(Math.random() * BS_STYLES.length)], floors: Math.random() < 0.62 ? 2 : 3,
+    const base = BS_STYLES[Math.floor(Math.random() * BS_STYLES.length)];
+    const sty = { ...base, floors: Math.random() < 0.62 ? 2 : 3, bow: base.low || (base.hood !== 'pediment' && Math.random() < 0.3),
       tint: BS_TINTS[Math.floor(Math.random() * BS_TINTS.length)].map(v => v * rnd(0.9, 1.1)), cornice: BS_CORNICE[Math.floor(Math.random() * BS_CORNICE.length)] };
     buildTerrace(side, z, n, W, sty);
     z += n * W;
