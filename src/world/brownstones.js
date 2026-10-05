@@ -120,12 +120,12 @@ function bsFrontLayer(list, x, zA, zB, yA, yB, holes, tile) {
 }
 /** Fenêtre (cadre + vitre instanciés, mis à l'échelle de l'ouverture) au fond de l'embrasure. */
 const bsQ = [new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, 0)), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -Math.PI / 2, 0))];
-function bsWindow(side, xBack, y0, y1, z, w, pLit, pShade) {
+function bsWindow(side, xBack, y0, y1, z, w, pLit, pShade, basement = false) {
   const m = new THREE.Matrix4(), h = y1 - y0, wy = (y0 + y1) / 2, ox = -side;
   m.compose(new THREE.Vector3(xBack + ox * 0.06, wy, z), new THREE.Quaternion(), new THREE.Vector3(1, h / WIN_H, w / WIN_W)); frameInst.push(m.clone());
   m.compose(new THREE.Vector3(xBack + ox * 0.02, wy, z), bsQ[side < 0 ? 0 : 1], new THREE.Vector3(w / WIN_W, h / WIN_H, 1));
   const r = Math.random();
-  if (r < pLit) litInst[Math.floor(Math.random() * 3)].push(m.clone());
+  if (r < pLit) { const lm = m.clone(); lm.noSilhouette = basement; litInst[Math.floor(Math.random() * 3)].push(lm); }   // pas de passant au sous-sol
   else if (r < pLit + pShade) shadeInst[Math.floor(Math.random() * 3)].push(m.clone());
   else darkInst.push(m.clone());
 }
@@ -307,7 +307,11 @@ function bsArchedDoor(side, fx, zd, yDoor, face, sty) {
   RIGHT.add(new THREE.Mesh(mergeGeometries(brass), brassMat));
   // imposte en demi-cercle, numéro doré
   const num = 2 * Math.floor(rnd(20, 160)) + (side > 0 ? 1 : 0);
-  const tr = new THREE.Mesh(new THREE.CircleGeometry(R - 0.03, 24, 0, Math.PI), new THREE.MeshBasicMaterial({ map: makeTransomTexture(num), color: hallGlassMat.color }));
+  // UV du demi-disque recalées sur toute la texture (sinon seule sa moitié haute s'affichait : chiffres
+  // coupés), proportions du canvas (512 × 196) gardées : le numéro tient dans le bas, là où l'arc est large
+  const trGeo = new THREE.CircleGeometry(R - 0.03, 24, 0, Math.PI), trP = trGeo.attributes.position, trUV = trGeo.attributes.uv;
+  for (let i = 0; i < trP.count; i++) trUV.setXY(i, 0.5 + trP.getX(i) / (R - 0.03) * 0.385, 0.02 + trP.getY(i) / (R - 0.03) * 0.98);
+  const tr = new THREE.Mesh(trGeo, new THREE.MeshBasicMaterial({ map: makeTransomTexture(num), color: hallGlassMat.color }));
   tr.rotation.y = rotY; tr.position.set(X(-BS_REC + 0.02), yDoor + DH + 0.06, zd); RIGHT.add(tr);
   // deux lanternes murales (globes) de part et d'autre de l'encadrement
   for (const e of [-1, 1]) {
@@ -449,7 +453,7 @@ function bsDecorate(side, X, h) {
     }
   }
   // parfois un sapin illuminé dans la cour, parfois des stalactites lumineuses sous le bandeau
-  if (Math.random() < 0.3 && h.free[1] - h.free[0] > 1.2) bsLitTree(X(h.bow ? 2.45 : 1.3), SIDEWALK_H + 0.25, (h.free[0] + h.free[1]) / 2, 1.7, kit, false);
+  if (Math.random() < 0.3 && h.free[1] - h.free[0] > 1.2) bsLitTree(X(h.bow ? 2.6 : 1.3), SIDEWALK_H + 0.25, (h.free[0] + h.free[1]) / 2, 1.7, kit, false);
   if (Math.random() < 0.3) for (let z = h.za + 0.2; z < h.zb - 0.2; z += 0.14) {
     if (Math.abs(z - h.zd) < 1.15) continue;                                     // le perron
     const k = 2 + Math.floor(Math.random() * 4);
@@ -511,7 +515,7 @@ function buildTerrace(side, z0, n, W, sty) {
       // rez-de-jardin : fenêtres à moitié dans la neige de la cour, derrière une grille
       if (b !== doorBay) {
         const w = 1.05, y1 = Math.min(1.5, yP - 0.4), y0 = Math.min(0.42, y1 - 0.5);
-        holesB.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.25, 0.45);
+        holesB.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.25, 0.45, true);
         for (let bz = -w / 2 + 0.06; bz < w / 2; bz += 0.11) { const g = new THREE.CylinderGeometry(0.011, 0.011, y1 - y0, 5); g.translate(X(0.04), (y0 + y1) / 2, zb + bz); fenceGeoms.push(g); }
         for (const hy of [y0 + 0.05, y1 - 0.05]) { const g = new THREE.BoxGeometry(0.02, 0.035, w + 0.04); g.translate(X(0.04), hy, zb); fenceGeoms.push(g); }
         // parlor floor : hautes fenêtres sous un fronton
@@ -591,52 +595,67 @@ function buildTerrace(side, z0, n, W, sty) {
   flushSnowPads(snowStart);
 }
 /* BOW-WINDOW arrondi (photo Renaissance de l'utilisateur) : une avancée en arc de cercle, du
-   rez-de-jardin jusque sous la corniche, sur les deux travées sans porte. 5 pans droits (l'arc est
-   tendu de zA à zB, saillie BS_BOW) : fenêtres sur les 3 pans du milieu à chaque niveau (mêmes
-   instances que les autres, tournées avec leur pan), appuis et larmiers enneigés, colonnettes aux
-   angles, bandeaux d'étage et chapeau sous la corniche. Chaque pan est construit comme une petite
-   façade plate (x = ox · profondeur, z le long du pan) puis tourné et posé sur la corde de son arc. */
-const BS_BOW = 0.95, bsBowM = new THREE.Matrix4(), bsBowQ = new THREE.Quaternion(), bsBowP = new THREE.Vector3(), bsBowY = new THREE.Vector3(0, 1, 0);
+   rez-de-jardin jusque sous la corniche, sur les deux travées sans porte. L'arc est tendu de zA à zB,
+   saillie BS_BOW (1,4 m : bien lisible de nuit, demande utilisateur). Trois pans droits portent les
+   fenêtres (mêmes instances que les autres, tournées avec leur pan) ; entre eux et aux deux retours,
+   les trumeaux sont faits de petits pans étroits qui suivent la courbe : l'avancée se lit ronde.
+   Appuis et larmiers enneigés, colonnettes aux montants des fenêtres, bandeaux, chapeau. Chaque pan
+   est construit comme une petite façade plate (x = ox · profondeur, z le long du pan) puis tourné et
+   posé sur la corde de son arc. */
+const BS_BOW = 1.4, bsBowM = new THREE.Matrix4(), bsBowQ = new THREE.Quaternion(), bsBowP = new THREE.Vector3(), bsBowY = new THREE.Vector3(0, 1, 0);
 function bsBowWindow(side, X, zA, zB, yP, y2, yTop, sty, face, base) {
-  const ox = -side, hw = (zB - zA) / 2, zm = (zA + zB) / 2, R = (hw * hw + BS_BOW * BS_BOW) / (2 * BS_BOW), dc = BS_BOW - R, a0 = Math.asin(hw / R), NF = 5;
-  const ang = k => -a0 + 2 * a0 * k / NF, P = k => ({ d: dc + R * Math.cos(ang(k)), z: zm + R * Math.sin(ang(k)) });
+  const ox = -side, hw = (zB - zA) / 2, zm = (zA + zB) / 2, sag = Math.min(BS_BOW, hw * 0.85);
+  const R = (hw * hw + sag * sag) / (2 * sag), dc = sag - R, a0 = Math.asin(hw / R);
+  // découpage en angle : retour (2 pans), fenêtre, trumeau (2 pans), fenêtre, trumeau (2 pans), fenêtre, retour (2 pans)
+  let aw = 2 * Math.asin(Math.min(1.2, 0.95 * R) / (2 * R));             // angle d'un pan de fenêtre (corde ~1,2 m)
+  if (2 * a0 - 3 * aw < 0.36) aw = (2 * a0 - 0.36) / 3;                   // assez de place pour les trumeaux
+  const ap = (2 * a0 - 3 * aw) / 8, facets = [];
+  for (const [n, a, win] of [[2, ap, false], [1, aw, true], [2, ap, false], [1, aw, true], [2, ap, false], [1, aw, true], [2, ap, false]])
+    for (let k = 0; k < n; k++) facets.push({ a, win });
   const ySplit = yP - 0.32;                                       // grès refendu en dessous, grès lisse au-dessus
-  const levels = [{ y0: Math.min(0.45, yP - 0.95), y1: Math.min(1.5, yP - 0.45), w: 0.85, lit: 0.25, shade: 0.45 },
+  const levels = [{ y0: Math.min(0.45, yP - 0.95), y1: Math.min(1.5, yP - 0.45), w: 0.85, lit: 0.25, shade: 0.45, basement: true },
     { y0: yP + 0.35, y1: yP + 3.0, w: 1.05, lit: 0.4, shade: 0.4 }];
   for (let j = 0; j < sty.floors; j++) { const y0 = y2 + j * UPPER_H + 0.75; levels.push({ y0, y1: y0 + (j === sty.floors - 1 ? 1.7 : 2.0), w: 1.0, lit: 0.3, shade: 0.45 }); }
   const place = (g, list, tile) => { g.applyMatrix4(bsBowM); bsPlace(list, g, tile); };
   const at = (ld, y) => bsBowP.set(ox * ld, y, 0).applyMatrix4(bsBowM);
-  const m = new THREE.Matrix4(), qg = new THREE.Quaternion();
-  for (let k = 0; k < NF; k++) {
-    const A = P(k), B = P(k + 1), psi = side * ang(k + 0.5), fw = Math.hypot(B.d - A.d, B.z - A.z);
+  const pt = a => ({ d: dc + R * Math.cos(a), z: zm + R * Math.sin(a) });
+  const m = new THREE.Matrix4(), qg = new THREE.Quaternion(), posts = [];
+  let a = -a0;
+  for (const F of facets) {
+    const A = pt(a), B = pt(a + F.a), psi = side * (a + F.a / 2), fw = Math.hypot(B.d - A.d, B.z - A.z);
     bsBowM.makeRotationY(psi).setPosition(X((A.d + B.d) / 2), 0, (A.z + B.z) / 2); bsBowQ.setFromAxisAngle(bsBowY, psi);
     const up = [], low = [];
-    if (k >= 1 && k <= 3) for (const L of levels) {
-      const w = Math.min(L.w, fw - 0.34), h = L.y1 - L.y0, wy = (L.y0 + L.y1) / 2;
-      (L.y1 < ySplit ? low : up).push({ z0: -w / 2, z1: w / 2, y0: L.y0, y1: L.y1 });
-      m.compose(at(-BS_REC + 0.06, wy), bsBowQ, new THREE.Vector3(1, h / WIN_H, w / WIN_W)); frameInst.push(m.clone());
-      qg.copy(bsBowQ).multiply(bsQ[side < 0 ? 0 : 1]);
-      m.compose(at(-BS_REC + 0.02, wy), qg, new THREE.Vector3(w / WIN_W, h / WIN_H, 1));
-      const r = Math.random();
-      if (r < L.lit) litInst[Math.floor(Math.random() * 3)].push(m.clone()); else if (r < L.lit + L.shade) shadeInst[Math.floor(Math.random() * 3)].push(m.clone()); else darkInst.push(m.clone());
-      // appui, larmier, neige
-      place(new THREE.BoxGeometry(BS_REC + 0.14, 0.12, w + 0.3).translate(ox * (0.14 - BS_REC) / 2, L.y0 - 0.06, 0), L.y1 < ySplit ? base : face, L.y1 < ySplit ? 5 : 5.5);
-      let p = at(-0.08, L.y0); snowPad(p.x, p.y, p.z, 0.42, w + 0.26, 0.1, 0, 0.18, psi);
-      place(new THREE.BoxGeometry(0.2, 0.16, w + 0.36).translate(ox * 0.1, L.y1 + 0.15, 0), L.y1 < ySplit ? base : face, L.y1 < ySplit ? 5 : 5.5);
-      p = at(0.1, L.y1 + 0.23); snowPad(p.x, p.y, p.z, 0.2, w + 0.3, 0.09, 0, 0.18, psi);
+    if (F.win) {
+      posts.push(A, B);
+      for (const L of levels) {
+        const w = Math.min(L.w, fw - 0.22), h = L.y1 - L.y0, wy = (L.y0 + L.y1) / 2, below = L.y1 < ySplit;
+        (below ? low : up).push({ z0: -w / 2, z1: w / 2, y0: L.y0, y1: L.y1 });
+        m.compose(at(-BS_REC + 0.06, wy), bsBowQ, new THREE.Vector3(1, h / WIN_H, w / WIN_W)); frameInst.push(m.clone());
+        qg.copy(bsBowQ).multiply(bsQ[side < 0 ? 0 : 1]);
+        m.compose(at(-BS_REC + 0.02, wy), qg, new THREE.Vector3(w / WIN_W, h / WIN_H, 1));
+        const r = Math.random();
+        if (r < L.lit) { const lm = m.clone(); lm.noSilhouette = !!L.basement; litInst[Math.floor(Math.random() * 3)].push(lm); }
+        else if (r < L.lit + L.shade) shadeInst[Math.floor(Math.random() * 3)].push(m.clone()); else darkInst.push(m.clone());
+        // appui, larmier, neige
+        place(new THREE.BoxGeometry(BS_REC + 0.14, 0.12, w + 0.2).translate(ox * (0.14 - BS_REC) / 2, L.y0 - 0.06, 0), below ? base : face, below ? 5 : 5.5);
+        let p = at(-0.08, L.y0); snowPad(p.x, p.y, p.z, 0.42, w + 0.16, 0.1, 0, 0.18, psi);
+        place(new THREE.BoxGeometry(0.2, 0.16, w + 0.24).translate(ox * 0.1, L.y1 + 0.15, 0), below ? base : face, below ? 5 : 5.5);
+        p = at(0.1, L.y1 + 0.23); snowPad(p.x, p.y, p.z, 0.2, w + 0.2, 0.09, 0, 0.18, psi);
+      }
     }
     const tf = [], tb = [];
-    bsFrontLayer(tf, ox * (-BS_REC / 2), -fw / 2, fw / 2, ySplit, yTop, up);
-    bsFrontLayer(tb, ox * (-BS_REC / 2), -fw / 2, fw / 2, -0.6, ySplit, low, 5);
+    bsFrontLayer(tf, ox * (-BS_REC / 2), -fw / 2 - 0.01, fw / 2 + 0.01, ySplit, yTop, up);
+    bsFrontLayer(tb, ox * (-BS_REC / 2), -fw / 2 - 0.01, fw / 2 + 0.01, -0.6, ySplit, low, 5);
     for (const g of tf) place(g, face); for (const g of tb) place(g, base, 5);
     // bandeau du parlor floor, cordon d'étage, chapeau sous la corniche (neige)
     for (const [d, hh, y, sn] of [[0.16, 0.3, yP - 0.17, 0.08], [0.1, 0.16, y2 - 0.05, 0], [0.5, 0.28, yTop - 0.14, 0.14]]) {
-      place(new THREE.BoxGeometry(d, hh, fw + 0.12).translate(ox * d / 2, y, 0), face);
-      if (sn) { const p = at(d / 2, y + hh / 2); snowPad(p.x, p.y, p.z, d, fw + 0.1, sn, 0, 0.18, psi); }
+      place(new THREE.BoxGeometry(d, hh, fw + 0.06).translate(ox * d / 2, y, 0), face);
+      if (sn) { const p = at(d / 2, y + hh / 2); snowPad(p.x, p.y, p.z, d, fw + 0.04, sn, 0, 0.18, psi); }
     }
+    a += F.a;
   }
-  for (let k = 0; k <= NF; k++) {                                 // colonnettes aux angles des pans
-    const A = P(k), g = new THREE.CylinderGeometry(0.12, 0.12, yTop + 0.6, 10); g.translate(X(A.d - 0.05), (yTop - 0.6) / 2, A.z); bsPlace(face, g);
+  for (const A of posts) {                                        // colonnettes aux montants des fenêtres
+    const g = new THREE.CylinderGeometry(0.09, 0.09, yTop + 0.6, 10); g.translate(X(A.d - 0.03), (yTop - 0.6) / 2, A.z); bsPlace(face, g);
   }
 }
 /* Jardinières sur les appuis : caisse peinte (ou de cuivre vert-de-gris), un dôme de neige, quelques

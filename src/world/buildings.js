@@ -884,10 +884,11 @@ export function flushChunk() {
   litInst.forEach((list, v) => {
     if (!list.length) return;
     const lit = new THREE.InstancedMesh(winGlassGeo, litMats[v], list.length);
-    list.forEach((m, i) => { lit.setMatrixAt(i, m); const k = 0.45 + Math.random() * 0.9; c.setHSL(0.06 + Math.random() * 0.06, 0.4 + Math.random() * 0.3, 0.6).multiplyScalar(k); lit.setColorAt(i, c); if (Math.random() < 0.16) sil.push(m); });
+    list.forEach((m, i) => { lit.setMatrixAt(i, m); const k = 0.45 + Math.random() * 0.9; c.setHSL(0.06 + Math.random() * 0.06, 0.4 + Math.random() * 0.3, 0.6).multiplyScalar(k); lit.setColorAt(i, c); if (!m.noSilhouette && Math.random() < 0.16) sil.push(m); });
     ST.add(lit);
   });
-  // quelqu'un passe derrière une fenêtre allumée sur six (voir silhouetteMat)
+  // quelqu'un passe derrière une fenêtre allumée sur six (voir silhouetteMat) ; jamais dans un rez-de-jardin
+  // à moitié enterré (matrice marquée noSilhouette, brownstones.js) : la personne serait coupée par le sol
   if (sil.length) {
     const g = winGlassGeo.clone(), seeds = new Float32Array(sil.length).map(() => Math.random());
     g.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
