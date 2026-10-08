@@ -103,16 +103,21 @@ export function updatePlayer(dt) {
   moveDir.set(0, 0, 0);
   if (keys.fwd) moveDir.add(fwdDir); if (keys.back) moveDir.sub(fwdDir); if (keys.right) moveDir.add(rightDir); if (keys.left) moveDir.sub(rightDir);
   const wants = moveDir.lengthSq() > 0; if (wants) moveDir.normalize();
-  target.copy(moveDir).multiplyScalar(WALK_SPEED * moveScale * (walkZoneHit?.stairs ? 0.62 : 1));   // on ralentit dans les marches
+  target.copy(moveDir).multiplyScalar(WALK_SPEED * moveScale * (!confine && walkZoneHit?.stairs ? 0.62 : 1));   // on ralentit dans les marches
   velocity.lerp(target, 1 - Math.exp(-dt * 8));
   if (!active) velocity.set(0, 0, 0);
   const p = camera.position;
-  // Déplacement axe par axe (glissement le long des obstacles), puis poussée hors de
-  // tout chevauchement résiduel. L'ancien garde-fou « déjà coincé → mouvement libre »
-  // était exploitable : le balancement des pas poussait la caméra de 2 cm dans une
-  // voiture, et le tour suivant tout passait à travers.
-  const nx = p.x + velocity.x * dt; if (!collides(nx, p.z, PLAYER_RADIUS)) p.x = nx; else velocity.x = 0;
-  const nz = p.z + velocity.z * dt; if (!collides(p.x, nz, PLAYER_RADIUS)) p.z = nz; else velocity.z = 0;
+  if (confine) {                                          // en hauteur (balcon) : pas de collisions au sol, un rectangle
+    p.x = THREE.MathUtils.clamp(p.x + velocity.x * dt, confine.x0, confine.x1);
+    p.z = THREE.MathUtils.clamp(p.z + velocity.z * dt, confine.z0, confine.z1);
+  } else {
+    // Déplacement axe par axe (glissement le long des obstacles), puis poussée hors de
+    // tout chevauchement résiduel. L'ancien garde-fou « déjà coincé → mouvement libre »
+    // était exploitable : le balancement des pas poussait la caméra de 2 cm dans une
+    // voiture, et le tour suivant tout passait à travers.
+    const nx = p.x + velocity.x * dt; if (!collides(nx, p.z, PLAYER_RADIUS)) p.x = nx; else velocity.x = 0;
+    const nz = p.z + velocity.z * dt; if (!collides(p.x, nz, PLAYER_RADIUS)) p.z = nz; else velocity.z = 0;
+  }
   const speed = Math.hypot(velocity.x, velocity.z);
   walkAmount = THREE.MathUtils.lerp(walkAmount, Math.min(speed / WALK_SPEED, 1), 1 - Math.exp(-dt * 6));
   // Cadence : bobPhase fait un cycle par ENJAMBÉE (deux pas) — c'est le balancement
@@ -126,21 +131,32 @@ export function updatePlayer(dt) {
   const bobY = Math.sin(bobPhase * 2) * 0.045 * walkAmount;
   const sway = Math.sin(bobPhase) * 0.025 * walkAmount;
   p.x += rightDir.x * (sway - lastSway); p.z += rightDir.z * (sway - lastSway); lastSway = sway;
-  pushOut(p, PLAYER_RADIUS);                              // le balancement ne peut pas nous mettre dans un obstacle
+  if (confine) { p.x = THREE.MathUtils.clamp(p.x, confine.x0, confine.x1); p.z = THREE.MathUtils.clamp(p.z, confine.z0, confine.z1); }
+  else pushOut(p, PLAYER_RADIUS);                         // le balancement ne peut pas nous mettre dans un obstacle
   // hauteur des pieds lissée : on monte une marche en ~0,15 s au lieu d'y être téléporté
-  const gy = groundHeightAt(p.x, p.z);
+  const gy = confine ? confine.y + 0.03 : groundHeightAt(p.x, p.z);
   footY = footY === null ? gy : footY + (gy - footY) * (1 - Math.exp(-dt * 14));
   p.y = footY + EYE_HEIGHT + bobY;
   // un pas = un demi-tour de bobPhase : trace laissée dans la neige (fx/footprints.js)
   const step = Math.floor(bobPhase / Math.PI);
   if (step !== lastStep) {
     lastStep = step;
-    if (walkAmount > 0.35 && speed > 0.4 && onStep) onStep(p.x + rightDir.x * 0.12 * (step % 2 ? 1 : -1), p.z + rightDir.z * 0.12 * (step % 2 ? 1 : -1), Math.atan2(velocity.x, velocity.z), step % 2);
+    if (walkAmount > 0.35 && speed > 0.4 && onStep) onStep(p.x + rightDir.x * 0.12 * (step % 2 ? 1 : -1), p.z + rightDir.z * 0.12 * (step % 2 ? 1 : -1), Math.atan2(velocity.x, velocity.z), step % 2, confine ? confine.y : null);
   }
   return speed;
 }
-let footY = null, lastStep = 0, onStep = null;
-/** Appelé à chaque pas : (x, z, cap, pied 0 | 1). */
+let footY = null, lastStep = 0, onStep = null, confine = null;
+/** Appelé à chaque pas : (x, z, cap, pied 0 | 1, hauteur imposée de la neige ou null). */
 export function setStepHandler(fn) { onStep = fn; }
+/** Hauteur (lissée) des pieds du joueur, ou null juste après une téléportation. */
+export function playerFootY() { return footY; }
+/** Déplacement borné à un rectangle MONDE { x0, x1, z0, z1, y (sol) } — balcon : les collisions au sol
+ *  n'ont pas d'étage — ou null pour revenir dans la rue. */
+export function setConfine(c) { confine = c; footY = null; }
+/** Téléportation (portes, player/doorways.js) : position, cap (0 = vers −Z), inclinaison. */
+export function teleportPlayer(x, z, yaw, pitch = 0) {
+  camera.position.x = x; camera.position.z = z; velocity.set(0, 0, 0); footY = null;
+  camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+}
 
 export { hud, fwdDir };

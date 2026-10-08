@@ -63,8 +63,8 @@ scene.add(footMesh);
 
 let footNext = 0;
 const footM4 = new THREE.Matrix4(), footQ = new THREE.Quaternion(), footE = new THREE.Euler(), footPos = new THREE.Vector3(), footScl = new THREE.Vector3();
-setStepHandler((x, z, heading, foot) => {
-  const wy = walkZoneY(x, z), y = wy ?? groundY(x, z);
+setStepHandler((x, z, heading, foot, yForced) => {
+  const wy = yForced ?? walkZoneY(x, z), y = wy ?? groundY(x, z);   // (yForced : neige du balcon)
   if (y < -0.8) return;                                              // fond de l'escalier du métro : plus de neige
   footQ.setFromEuler(footE.set(0, heading + Math.PI, 0));
   footM4.compose(footPos.set(x, y + (wy === null ? 0.035 : 0.01), z), footQ, footScl.set(foot ? -1 : 1, 1, 0.95 + Math.random() * 0.1));

@@ -32,6 +32,8 @@ import { composer } from './fx/postprocessing.js';
 import { adaptiveRes } from './fx/adaptiveResolution.js';
 import { hud, fwdDir, updatePlayer, keys, debugActivate } from './player/controls.js';
 import { updateFootprints } from './fx/footprints.js';
+import { updateDoorways, useDoorForTest } from './player/doorways.js';
+import { doorways } from './world/doorways.js';
 import { updateWind, windDebug } from './audio/wind.js';
 import { snowBounce } from './world/weathering.js';
 import { updatePhotoGame, afterRenderPhoto, photoDebug } from './game/photoGame.js';
@@ -70,7 +72,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones, windState, walkZones, activate: debugActivate, powder: powderState };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones, windState, walkZones, activate: debugActivate, powder: powderState, doorways, useDoor: useDoorForTest };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
@@ -113,6 +115,7 @@ function frame(rawDt, t) {
   const dt = Math.min(rawDt, 0.05);
   updateFootprints(t);                                          // horloge des traces de pas (posées pendant updatePlayer)
   const speed = updatePlayer(dt);
+  updateDoorways();                                             // porte à portée ? (touche F : balcon)
   updateStreetVisibility(camera);                               // rue de gauche : on ne dessine que ce que l'ouverture du carrefour laisse voir
   if (updatePhotoGame(dt, t, speed)) updateScale();             // viseur / zoom : le champ de vision a changé
 

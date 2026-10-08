@@ -13,6 +13,7 @@ import { addPointSource } from './lightRegistry.js';
 import { RIGHT, RIGHT_CHUNKS } from './street.js';
 import { addWalkZone } from './walkSurface.js';
 import { addPowderCornice } from './powderSources.js';
+import { addDoorway } from './doorways.js';
 import { WIN_W, WIN_H, entranceMats, doorMaterial, stileUV, snowPad, flushSnowPads, buildEntrance, beginStreet, endStreet, flushChunk, paintMat, PHOTO_WHITE, frameInst, litInst, darkInst, shadeInst  , fenceGeoms, snowGeoms } from './buildings.js';
 
 /* =====================================================================
@@ -508,6 +509,7 @@ function buildTerrace(side, z0, n, W, sty) {
   for (let i = 0; i < n; i++) {
     const za = z0 + i * W, doorEnd = i % 2 === 0, bays = [W / 6, W / 2, 5 * W / 6].map(u => za + u), doorBay = doorEnd ? 2 : 0, zd = bays[doorBay];
     const wins = [];                                              // fenêtres de la maison (décorations)
+    const balconyHouse = sty.balcony && i === n - 1, flTop = y2 + (sty.floors - 1) * UPPER_H;   // plancher du dernier étage
     // jardinières enneigées sur les appuis (une maison sur trois environ, pas sur les bow-windows)
     const planter = !sty.bow && Math.random() < 0.38 ? bsPick(BS_PLANTERS) : null;
     bays.forEach((zb, b) => {
@@ -527,8 +529,10 @@ function buildTerrace(side, z0, n, W, sty) {
       }
       // étages : trois fenêtres alignées sur les travées, la dernière plus basse
       for (let j = 0; j < sty.floors; j++) {
-        const w = 1.1, y0 = y2 + j * UPPER_H + 0.75, y1 = y0 + (j === sty.floors - 1 ? 1.7 : 2.0);
-        holesF.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.3, 0.45);
+        // maison au balcon : au dernier étage, des PORTES-FENÊTRES jusqu'au plancher (celle du milieu allumée : on en sort)
+        const french = balconyHouse && j === sty.floors - 1, yw = y2 + j * UPPER_H + 0.75;
+        const w = 1.1, y1 = yw + (j === sty.floors - 1 ? 1.7 : 2.0), y0 = french ? flTop + 0.06 : yw;
+        holesF.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, french && b === 1 ? 1 : 0.3, 0.45, french);
         wins.push({ z: zb, y0, y1, w, parlor: false });
         bsSill(face, X, y0, zb, w);
         if (planter && j === 0 && b !== doorBay) bsPlanter(X, y0, zb, w, planter);
@@ -566,6 +570,7 @@ function buildTerrace(side, z0, n, W, sty) {
     if (i % 2 === 0) { bsBox(base, 0.7, 1.6, 0.9, X(-4), yTop + 1.8, za, 5); snowPad(X(-4), yTop + 2.6, za, 0.72, 0.92, 0.15); }
     // mur mitoyen : un pilastre de grès à peine saillant marque chaque maison de la terrace
     if (i > 0) bsBox(face, 0.08, yTop - yP + 0.2, 0.3, X(0.04), (yP + yTop) / 2 - 0.1, za);
+    if (balconyHouse) bsBalcony(side, X, za, W, zd, bays[1], yP, flTop);
     brownHouses.push({ side, za, zb: za + W, zd, free: doorEnd ? [za + 0.4, s0 - 0.3] : [s1 + 0.3, za + W - 0.4] });
   }
   // façades : couche avant découpée autour des ouvertures
@@ -673,6 +678,54 @@ function bsPlanter(X, y0, zb, w, color) {
   }
   snowPad(X(0.02), y0 + 0.25, zb, 0.3, L + 0.02, 0.09);
 }
+/* BALCON du dernier étage (demande utilisateur : une vue d'en haut sur la rue) : la maison la plus
+   proche du carrefour, côté en face. Dalle de grès sur quatre grandes consoles, garde-corps en fonte
+   (lisses, barreaux, poteaux à boule), neige sur la dalle et les lisses, guirlande d'ampoules blanc
+   chaud sur la lisse avant, deux petits sapins en pots. On y monte en entrant par la porte du perron
+   (touche F, player/doorways.js) ; on redescend par la porte-fenêtre du milieu. */
+const BS_BAL_D = 1.5;
+function bsBalcony(side, X, za, W, zd, zMid, yP, fl) {
+  const ox = -side, z0 = za + 0.3, z1 = za + W - 0.3, zc = (z0 + z1) / 2, L = z1 - z0, D = BS_BAL_D, V = (d, y, z) => new THREE.Vector3(X(d), y, z);
+  const slab = [];
+  bsBox(slab, D, 0.18, L, X(D / 2), fl - 0.09, zc);
+  bsBox(slab, 0.1, 0.09, L + 0.08, X(D + 0.02), fl - 0.17, zc);                       // nez mouluré
+  for (const z of [z0 + 0.35, z0 + L / 3, z0 + 2 * L / 3, z1 - 0.35]) {               // consoles à volute sous la dalle
+    const g = bsBracketGeo.clone(); g.scale(D / 0.62, 1.05, 1.3); if (ox < 0) g.rotateY(Math.PI); g.translate(X(0), fl - 0.18 - 0.84, z); bsPlace(slab, g);
+  }
+  RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(slab.map(g => g.index ? g.toNonIndexed() : g)), paintMat(BS_CORNICE[4], 0.75, 0.05))));
+  snowPad(X(D / 2), fl, zc, D - 0.08, L - 0.08, 0.11);
+  // garde-corps : trois côtés (le long de la façade, ouvert vers la maison)
+  const H = 1.05, A = V(0.06, fl, z0), B = V(D - 0.05, fl, z0), C = V(D - 0.05, fl, z1), E = V(0.06, fl, z1);
+  for (const [a, b] of [[A, B], [B, C], [C, E]]) {
+    const len = a.distanceTo(b);
+    bsStrut(fenceGeoms, a.clone().setY(fl + H), b.clone().setY(fl + H), 0.055);
+    bsStrut(fenceGeoms, a.clone().setY(fl + 0.12), b.clone().setY(fl + 0.12), 0.035);
+    bsStrut(fenceGeoms, a.clone().setY(fl + H - 0.16), b.clone().setY(fl + H - 0.16), 0.025);
+    for (let t = 0.11; t < len - 0.05; t += 0.11) {
+      const p = a.clone().lerp(b, t / len), g = new THREE.CylinderGeometry(0.012, 0.012, H - 0.12, 5); g.translate(p.x, fl + 0.12 + (H - 0.12) / 2, p.z); fenceGeoms.push(g);
+    }
+    bsSnowStrip(a.clone().setY(fl + H + 0.03), b.clone().setY(fl + H + 0.03), 0.07, 0.05);
+  }
+  for (const p of [A, B, C, E]) {
+    const g = new THREE.BoxGeometry(0.08, H + 0.08, 0.08); g.translate(p.x, fl + (H + 0.08) / 2, p.z); fenceGeoms.push(g);
+    const ball = new THREE.SphereGeometry(0.06, 8, 6); ball.translate(p.x, fl + H + 0.14, p.z); fenceGeoms.push(ball);
+  }
+  // guirlande d'ampoules sur la lisse avant, deux sapins en pots aux coins
+  const kit = { pal: ['warm'], balls: [] };
+  bsGarlandSeg(B.clone().setY(fl + H - 0.03), C.clone().setY(fl + H - 0.03), 0.18, kit, { bare: true });
+  for (const z of [z0 + 0.35, z1 - 0.35]) bsLitTree(X(D - 0.35), fl + 0.06, z, 0.85, kit, true);
+  addPointSource({ pos: RIGHT.toWorld(V(0.6, fl + 1.9, zMid)), color: new THREE.Color(0xffc890), intensity: 3, distance: 6 });
+  // l'entrée : porte du perron → balcon ; porte-fenêtre du milieu → palier du perron
+  const W3 = (d, z) => RIGHT.toWorld(V(d, 0, z)), out = W3(1, zd).sub(W3(0, zd)), yaw = Math.atan2(-out.x, -out.z);
+  const c0 = W3(0.32, z0 + 0.22), c1 = W3(D - 0.24, z1 - 0.22);
+  addDoorway({
+    door: W3(0.75, zd), doorY: yP, r: 0.95,
+    out: { ...W3(0.95, zd), yaw },
+    balcony: { ...W3(1.05, zMid), y: fl + 0.11, yaw, confine: { x0: Math.min(c0.x, c1.x), x1: Math.max(c0.x, c1.x), z0: Math.min(c0.z, c1.z), z1: Math.max(c0.z, c1.z), y: fl + 0.11 } },
+    balconyDoor: W3(0.32, zMid), rBack: 0.5,                     // on arrive près de la rambarde ; l'invite vient en revenant vers la porte
+  });
+  addSubject({ label: 'Un balcon enneigé au-dessus de la rue', value: 0.6, box: RIGHT.box(boxAt(X(D / 2), zc, D / 2 + 0.1, L / 2 + 0.1, fl - 1, fl + 1.3)) });
+}
 function bsSill(list, X, y0, zb, w) {
   bsBox(list, BS_REC + 0.14, 0.12, w + 0.3, X((0.14 - BS_REC) / 2), y0 - 0.06, zb);
   snowPad(X(-0.08), y0, zb, 0.42, w + 0.26, 0.1);
@@ -708,7 +761,9 @@ function buildBrownRow(side, zFrom, zTo) {
     let n = 2 + Math.floor(Math.random() * 4), W = rnd(6.0, 6.9);
     if (R - n * W < 12.2) { n = Math.max(1, Math.round(R / 6.5)); W = R / n; }   // dernière terrace : elle prend le reste
     const base = BS_STYLES[Math.floor(Math.random() * BS_STYLES.length)];
-    const sty = { ...base, floors: Math.random() < 0.62 ? 2 : 3, bow: base.low || (base.hood !== 'pediment' && Math.random() < 0.3),
+    // la dernière terrace d'en face touche le carrefour : sa dernière maison a le balcon où l'on peut monter
+    const balcony = side < 0 && z + n * W >= zTo - 0.01;
+    const sty = { ...base, floors: Math.random() < 0.62 ? 2 : 3, balcony, bow: !balcony && (base.low || (base.hood !== 'pediment' && Math.random() < 0.3)),
       tint: BS_TINTS[Math.floor(Math.random() * BS_TINTS.length)].map(v => v * rnd(0.9, 1.1)), cornice: BS_CORNICE[Math.floor(Math.random() * BS_CORNICE.length)] };
     buildTerrace(side, z, n, W, sty);
     z += n * W;

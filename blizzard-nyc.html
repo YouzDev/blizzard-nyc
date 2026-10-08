@@ -72,6 +72,13 @@
   #toast { position: fixed; left: 50%; bottom: 44px; z-index: 7; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 8px 16px; border-radius: 4px;
     background: rgba(8,12,20,0.78); color: #e6ecf4; font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; text-align: center; }
   #toast.on { opacity: 1; }
+  /* porte où l'on peut entrer (player/doorways.js) : invite, fondu au noir */
+  #prompt { position: fixed; left: 50%; bottom: 96px; z-index: 7; transform: translateX(-50%); padding: 7px 14px; border-radius: 4px;
+    background: rgba(8,12,20,0.72); color: #e6ecf4; font-size: 14px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
+  #prompt.on { opacity: 1; }
+  #prompt kbd { display: inline-block; min-width: 1.2em; padding: 0 0.35em; margin-right: 0.35em; border: 1px solid rgba(230,236,244,0.5); border-radius: 3px; font: inherit; text-align: center; }
+  #fade { position: fixed; inset: 0; z-index: 9; background: #000; opacity: 0; transition: opacity .35s; pointer-events: none; }
+  #fade.on { opacity: 1; }
   #album, #report { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto; padding: 24px 16px 40px; box-sizing: border-box;
     background: rgba(6,9,15,0.94); color: #e6ecf4; }
   #album.open, #report.open { display: block; }
@@ -122,7 +129,7 @@
     </div>
     <div id="loadBox"><div id="loadBar"><div></div></div><p id="loadText">Préparation de la rue…</p></div>
     <div class="keys">
-      <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> marcher · souris regarder · <kbd>M</kbd> son · <kbd>Échap</kbd> pause
+      <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> marcher · souris regarder · <kbd>F</kbd> entrer (une porte) · <kbd>M</kbd> son · <kbd>Échap</kbd> pause
       <span class="photo-keys"><br>clic droit (ou <kbd>V</kbd>) viser · clic gauche (ou <kbd>Espace</kbd>) déclencher · molette zoom<br>
       <kbd>E</kbd> essuyer l'objectif · <kbd>I</kbd> album</span>
     </div>
@@ -139,6 +146,8 @@
 <div id="flash"></div>
 <div id="wipe"></div>
 <div id="toast"></div>
+<div id="prompt"></div>
+<div id="fade"></div>
 <div id="album"></div>
 <div id="report"></div>
 <button id="sound" type="button" aria-label="Son du vent" aria-pressed="false" title="Activer le son (M)">
@@ -3796,6 +3805,21 @@ function walkZoneY(x, z) {
   return null;
 }
 
+/* ───────────────────────── src/world/doorways.js ───────────────────────── */
+/* =====================================================================
+   4 ter. PORTES OÙ L'ON PEUT ENTRER
+   Registre rempli par le décor (pour l'instant une seule : la brownstone la plus proche du carrefour,
+   dans la rue de droite, qui mène à son balcon du dernier étage). Chaque entrée, en coordonnées MONDE :
+   - door {x, z}, doorY, r : la porte côté rue (on doit être sur le palier du perron, à moins de r) ;
+   - out {x, z, yaw} : où l'on se retrouve en ressortant (palier, face à la rue) ;
+   - balcony {x, z, y, yaw, confine {x0, x1, z0, z1}} : où l'on arrive, et le rectangle où le joueur
+     peut se déplacer là-haut (les collisions au sol n'ont pas d'étage : on borne le déplacement) ;
+   - balconyDoor {x, z}, rBack : la porte-fenêtre par laquelle on redescend.
+   La logique (touche F, fondu, téléportation) vit dans player/doorways.js.
+   ===================================================================== */
+const doorways = [];
+function addDoorway(d) { doorways.push({ onBalcony: false, ...d }); }
+
 /* ───────────────────────── src/world/brownstones.js ───────────────────────── */
 /* =====================================================================
    6 quinquies. BROWNSTONES (rue de droite)
@@ -4290,6 +4314,7 @@ function buildTerrace(side, z0, n, W, sty) {
   for (let i = 0; i < n; i++) {
     const za = z0 + i * W, doorEnd = i % 2 === 0, bays = [W / 6, W / 2, 5 * W / 6].map(u => za + u), doorBay = doorEnd ? 2 : 0, zd = bays[doorBay];
     const wins = [];                                              // fenêtres de la maison (décorations)
+    const balconyHouse = sty.balcony && i === n - 1, flTop = y2 + (sty.floors - 1) * UPPER_H;   // plancher du dernier étage
     // jardinières enneigées sur les appuis (une maison sur trois environ, pas sur les bow-windows)
     const planter = !sty.bow && Math.random() < 0.38 ? bsPick(BS_PLANTERS) : null;
     bays.forEach((zb, b) => {
@@ -4309,8 +4334,10 @@ function buildTerrace(side, z0, n, W, sty) {
       }
       // étages : trois fenêtres alignées sur les travées, la dernière plus basse
       for (let j = 0; j < sty.floors; j++) {
-        const w = 1.1, y0 = y2 + j * UPPER_H + 0.75, y1 = y0 + (j === sty.floors - 1 ? 1.7 : 2.0);
-        holesF.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, 0.3, 0.45);
+        // maison au balcon : au dernier étage, des PORTES-FENÊTRES jusqu'au plancher (celle du milieu allumée : on en sort)
+        const french = balconyHouse && j === sty.floors - 1, yw = y2 + j * UPPER_H + 0.75;
+        const w = 1.1, y1 = yw + (j === sty.floors - 1 ? 1.7 : 2.0), y0 = french ? flTop + 0.06 : yw;
+        holesF.push({ z0: zb - w / 2, z1: zb + w / 2, y0, y1 }); bsWindow(side, xB, y0, y1, zb, w, french && b === 1 ? 1 : 0.3, 0.45, french);
         wins.push({ z: zb, y0, y1, w, parlor: false });
         bsSill(face, X, y0, zb, w);
         if (planter && j === 0 && b !== doorBay) bsPlanter(X, y0, zb, w, planter);
@@ -4348,6 +4375,7 @@ function buildTerrace(side, z0, n, W, sty) {
     if (i % 2 === 0) { bsBox(base, 0.7, 1.6, 0.9, X(-4), yTop + 1.8, za, 5); snowPad(X(-4), yTop + 2.6, za, 0.72, 0.92, 0.15); }
     // mur mitoyen : un pilastre de grès à peine saillant marque chaque maison de la terrace
     if (i > 0) bsBox(face, 0.08, yTop - yP + 0.2, 0.3, X(0.04), (yP + yTop) / 2 - 0.1, za);
+    if (balconyHouse) bsBalcony(side, X, za, W, zd, bays[1], yP, flTop);
     brownHouses.push({ side, za, zb: za + W, zd, free: doorEnd ? [za + 0.4, s0 - 0.3] : [s1 + 0.3, za + W - 0.4] });
   }
   // façades : couche avant découpée autour des ouvertures
@@ -4455,6 +4483,54 @@ function bsPlanter(X, y0, zb, w, color) {
   }
   snowPad(X(0.02), y0 + 0.25, zb, 0.3, L + 0.02, 0.09);
 }
+/* BALCON du dernier étage (demande utilisateur : une vue d'en haut sur la rue) : la maison la plus
+   proche du carrefour, côté en face. Dalle de grès sur quatre grandes consoles, garde-corps en fonte
+   (lisses, barreaux, poteaux à boule), neige sur la dalle et les lisses, guirlande d'ampoules blanc
+   chaud sur la lisse avant, deux petits sapins en pots. On y monte en entrant par la porte du perron
+   (touche F, player/doorways.js) ; on redescend par la porte-fenêtre du milieu. */
+const BS_BAL_D = 1.5;
+function bsBalcony(side, X, za, W, zd, zMid, yP, fl) {
+  const ox = -side, z0 = za + 0.3, z1 = za + W - 0.3, zc = (z0 + z1) / 2, L = z1 - z0, D = BS_BAL_D, V = (d, y, z) => new THREE.Vector3(X(d), y, z);
+  const slab = [];
+  bsBox(slab, D, 0.18, L, X(D / 2), fl - 0.09, zc);
+  bsBox(slab, 0.1, 0.09, L + 0.08, X(D + 0.02), fl - 0.17, zc);                       // nez mouluré
+  for (const z of [z0 + 0.35, z0 + L / 3, z0 + 2 * L / 3, z1 - 0.35]) {               // consoles à volute sous la dalle
+    const g = bsBracketGeo.clone(); g.scale(D / 0.62, 1.05, 1.3); if (ox < 0) g.rotateY(Math.PI); g.translate(X(0), fl - 0.18 - 0.84, z); bsPlace(slab, g);
+  }
+  RIGHT.add(shadowed(new THREE.Mesh(mergeGeometries(slab.map(g => g.index ? g.toNonIndexed() : g)), paintMat(BS_CORNICE[4], 0.75, 0.05))));
+  snowPad(X(D / 2), fl, zc, D - 0.08, L - 0.08, 0.11);
+  // garde-corps : trois côtés (le long de la façade, ouvert vers la maison)
+  const H = 1.05, A = V(0.06, fl, z0), B = V(D - 0.05, fl, z0), C = V(D - 0.05, fl, z1), E = V(0.06, fl, z1);
+  for (const [a, b] of [[A, B], [B, C], [C, E]]) {
+    const len = a.distanceTo(b);
+    bsStrut(fenceGeoms, a.clone().setY(fl + H), b.clone().setY(fl + H), 0.055);
+    bsStrut(fenceGeoms, a.clone().setY(fl + 0.12), b.clone().setY(fl + 0.12), 0.035);
+    bsStrut(fenceGeoms, a.clone().setY(fl + H - 0.16), b.clone().setY(fl + H - 0.16), 0.025);
+    for (let t = 0.11; t < len - 0.05; t += 0.11) {
+      const p = a.clone().lerp(b, t / len), g = new THREE.CylinderGeometry(0.012, 0.012, H - 0.12, 5); g.translate(p.x, fl + 0.12 + (H - 0.12) / 2, p.z); fenceGeoms.push(g);
+    }
+    bsSnowStrip(a.clone().setY(fl + H + 0.03), b.clone().setY(fl + H + 0.03), 0.07, 0.05);
+  }
+  for (const p of [A, B, C, E]) {
+    const g = new THREE.BoxGeometry(0.08, H + 0.08, 0.08); g.translate(p.x, fl + (H + 0.08) / 2, p.z); fenceGeoms.push(g);
+    const ball = new THREE.SphereGeometry(0.06, 8, 6); ball.translate(p.x, fl + H + 0.14, p.z); fenceGeoms.push(ball);
+  }
+  // guirlande d'ampoules sur la lisse avant, deux sapins en pots aux coins
+  const kit = { pal: ['warm'], balls: [] };
+  bsGarlandSeg(B.clone().setY(fl + H - 0.03), C.clone().setY(fl + H - 0.03), 0.18, kit, { bare: true });
+  for (const z of [z0 + 0.35, z1 - 0.35]) bsLitTree(X(D - 0.35), fl + 0.06, z, 0.85, kit, true);
+  addPointSource({ pos: RIGHT.toWorld(V(0.6, fl + 1.9, zMid)), color: new THREE.Color(0xffc890), intensity: 3, distance: 6 });
+  // l'entrée : porte du perron → balcon ; porte-fenêtre du milieu → palier du perron
+  const W3 = (d, z) => RIGHT.toWorld(V(d, 0, z)), out = W3(1, zd).sub(W3(0, zd)), yaw = Math.atan2(-out.x, -out.z);
+  const c0 = W3(0.32, z0 + 0.22), c1 = W3(D - 0.24, z1 - 0.22);
+  addDoorway({
+    door: W3(0.75, zd), doorY: yP, r: 0.95,
+    out: { ...W3(0.95, zd), yaw },
+    balcony: { ...W3(1.05, zMid), y: fl + 0.11, yaw, confine: { x0: Math.min(c0.x, c1.x), x1: Math.max(c0.x, c1.x), z0: Math.min(c0.z, c1.z), z1: Math.max(c0.z, c1.z), y: fl + 0.11 } },
+    balconyDoor: W3(0.32, zMid), rBack: 0.5,                     // on arrive près de la rambarde ; l'invite vient en revenant vers la porte
+  });
+  addSubject({ label: 'Un balcon enneigé au-dessus de la rue', value: 0.6, box: RIGHT.box(boxAt(X(D / 2), zc, D / 2 + 0.1, L / 2 + 0.1, fl - 1, fl + 1.3)) });
+}
 function bsSill(list, X, y0, zb, w) {
   bsBox(list, BS_REC + 0.14, 0.12, w + 0.3, X((0.14 - BS_REC) / 2), y0 - 0.06, zb);
   snowPad(X(-0.08), y0, zb, 0.42, w + 0.26, 0.1);
@@ -4490,7 +4566,9 @@ function buildBrownRow(side, zFrom, zTo) {
     let n = 2 + Math.floor(Math.random() * 4), W = rnd(6.0, 6.9);
     if (R - n * W < 12.2) { n = Math.max(1, Math.round(R / 6.5)); W = R / n; }   // dernière terrace : elle prend le reste
     const base = BS_STYLES[Math.floor(Math.random() * BS_STYLES.length)];
-    const sty = { ...base, floors: Math.random() < 0.62 ? 2 : 3, bow: base.low || (base.hood !== 'pediment' && Math.random() < 0.3),
+    // la dernière terrace d'en face touche le carrefour : sa dernière maison a le balcon où l'on peut monter
+    const balcony = side < 0 && z + n * W >= zTo - 0.01;
+    const sty = { ...base, floors: Math.random() < 0.62 ? 2 : 3, balcony, bow: !balcony && (base.low || (base.hood !== 'pediment' && Math.random() < 0.3)),
       tint: BS_TINTS[Math.floor(Math.random() * BS_TINTS.length)].map(v => v * rnd(0.9, 1.1)), cornice: BS_CORNICE[Math.floor(Math.random() * BS_CORNICE.length)] };
     buildTerrace(side, z, n, W, sty);
     z += n * W;
@@ -7907,16 +7985,21 @@ function updatePlayer(dt) {
   moveDir.set(0, 0, 0);
   if (keys.fwd) moveDir.add(fwdDir); if (keys.back) moveDir.sub(fwdDir); if (keys.right) moveDir.add(rightDir); if (keys.left) moveDir.sub(rightDir);
   const wants = moveDir.lengthSq() > 0; if (wants) moveDir.normalize();
-  target.copy(moveDir).multiplyScalar(WALK_SPEED * moveScale * (walkZoneHit?.stairs ? 0.62 : 1));   // on ralentit dans les marches
+  target.copy(moveDir).multiplyScalar(WALK_SPEED * moveScale * (!confine && walkZoneHit?.stairs ? 0.62 : 1));   // on ralentit dans les marches
   velocity.lerp(target, 1 - Math.exp(-dt * 8));
   if (!active) velocity.set(0, 0, 0);
   const p = camera.position;
-  // Déplacement axe par axe (glissement le long des obstacles), puis poussée hors de
-  // tout chevauchement résiduel. L'ancien garde-fou « déjà coincé → mouvement libre »
-  // était exploitable : le balancement des pas poussait la caméra de 2 cm dans une
-  // voiture, et le tour suivant tout passait à travers.
-  const nx = p.x + velocity.x * dt; if (!collides(nx, p.z, PLAYER_RADIUS)) p.x = nx; else velocity.x = 0;
-  const nz = p.z + velocity.z * dt; if (!collides(p.x, nz, PLAYER_RADIUS)) p.z = nz; else velocity.z = 0;
+  if (confine) {                                          // en hauteur (balcon) : pas de collisions au sol, un rectangle
+    p.x = THREE.MathUtils.clamp(p.x + velocity.x * dt, confine.x0, confine.x1);
+    p.z = THREE.MathUtils.clamp(p.z + velocity.z * dt, confine.z0, confine.z1);
+  } else {
+    // Déplacement axe par axe (glissement le long des obstacles), puis poussée hors de
+    // tout chevauchement résiduel. L'ancien garde-fou « déjà coincé → mouvement libre »
+    // était exploitable : le balancement des pas poussait la caméra de 2 cm dans une
+    // voiture, et le tour suivant tout passait à travers.
+    const nx = p.x + velocity.x * dt; if (!collides(nx, p.z, PLAYER_RADIUS)) p.x = nx; else velocity.x = 0;
+    const nz = p.z + velocity.z * dt; if (!collides(p.x, nz, PLAYER_RADIUS)) p.z = nz; else velocity.z = 0;
+  }
   const speed = Math.hypot(velocity.x, velocity.z);
   walkAmount = THREE.MathUtils.lerp(walkAmount, Math.min(speed / WALK_SPEED, 1), 1 - Math.exp(-dt * 6));
   // Cadence : bobPhase fait un cycle par ENJAMBÉE (deux pas) — c'est le balancement
@@ -7930,22 +8013,33 @@ function updatePlayer(dt) {
   const bobY = Math.sin(bobPhase * 2) * 0.045 * walkAmount;
   const sway = Math.sin(bobPhase) * 0.025 * walkAmount;
   p.x += rightDir.x * (sway - lastSway); p.z += rightDir.z * (sway - lastSway); lastSway = sway;
-  pushOut(p, PLAYER_RADIUS);                              // le balancement ne peut pas nous mettre dans un obstacle
+  if (confine) { p.x = THREE.MathUtils.clamp(p.x, confine.x0, confine.x1); p.z = THREE.MathUtils.clamp(p.z, confine.z0, confine.z1); }
+  else pushOut(p, PLAYER_RADIUS);                         // le balancement ne peut pas nous mettre dans un obstacle
   // hauteur des pieds lissée : on monte une marche en ~0,15 s au lieu d'y être téléporté
-  const gy = groundHeightAt(p.x, p.z);
+  const gy = confine ? confine.y + 0.03 : groundHeightAt(p.x, p.z);
   footY = footY === null ? gy : footY + (gy - footY) * (1 - Math.exp(-dt * 14));
   p.y = footY + EYE_HEIGHT + bobY;
   // un pas = un demi-tour de bobPhase : trace laissée dans la neige (fx/footprints.js)
   const step = Math.floor(bobPhase / Math.PI);
   if (step !== lastStep) {
     lastStep = step;
-    if (walkAmount > 0.35 && speed > 0.4 && onStep) onStep(p.x + rightDir.x * 0.12 * (step % 2 ? 1 : -1), p.z + rightDir.z * 0.12 * (step % 2 ? 1 : -1), Math.atan2(velocity.x, velocity.z), step % 2);
+    if (walkAmount > 0.35 && speed > 0.4 && onStep) onStep(p.x + rightDir.x * 0.12 * (step % 2 ? 1 : -1), p.z + rightDir.z * 0.12 * (step % 2 ? 1 : -1), Math.atan2(velocity.x, velocity.z), step % 2, confine ? confine.y : null);
   }
   return speed;
 }
-let footY = null, lastStep = 0, onStep = null;
-/** Appelé à chaque pas : (x, z, cap, pied 0 | 1). */
+let footY = null, lastStep = 0, onStep = null, confine = null;
+/** Appelé à chaque pas : (x, z, cap, pied 0 | 1, hauteur imposée de la neige ou null). */
 function setStepHandler(fn) { onStep = fn; }
+/** Hauteur (lissée) des pieds du joueur, ou null juste après une téléportation. */
+function playerFootY() { return footY; }
+/** Déplacement borné à un rectangle MONDE { x0, x1, z0, z1, y (sol) } — balcon : les collisions au sol
+ *  n'ont pas d'étage — ou null pour revenir dans la rue. */
+function setConfine(c) { confine = c; footY = null; }
+/** Téléportation (portes, player/doorways.js) : position, cap (0 = vers −Z), inclinaison. */
+function teleportPlayer(x, z, yaw, pitch = 0) {
+  camera.position.x = x; camera.position.z = z; velocity.set(0, 0, 0); footY = null;
+  camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+}
 
 /* ───────────────────────── src/fx/footprints.js ───────────────────────── */
 /* =====================================================================
@@ -8006,8 +8100,8 @@ scene.add(footMesh);
 
 let footNext = 0;
 const footM4 = new THREE.Matrix4(), footQ = new THREE.Quaternion(), footE = new THREE.Euler(), footPos = new THREE.Vector3(), footScl = new THREE.Vector3();
-setStepHandler((x, z, heading, foot) => {
-  const wy = walkZoneY(x, z), y = wy ?? groundY(x, z);
+setStepHandler((x, z, heading, foot, yForced) => {
+  const wy = yForced ?? walkZoneY(x, z), y = wy ?? groundY(x, z);   // (yForced : neige du balcon)
   if (y < -0.8) return;                                              // fond de l'escalier du métro : plus de neige
   footQ.setFromEuler(footE.set(0, heading + Math.PI, 0));
   footM4.compose(footPos.set(x, y + (wy === null ? 0.035 : 0.01), z), footQ, footScl.set(foot ? -1 : 1, 1, 0.95 + Math.random() * 0.1));
@@ -8016,6 +8110,50 @@ setStepHandler((x, z, heading, foot) => {
   footNext = (footNext + 1) % PRINTS;
 });
 function updateFootprints(t) { footUniforms.uTime.value = t; }
+
+/* ───────────────────────── src/player/doorways.js ───────────────────────── */
+/* =====================================================================
+   13 bis. ENTRER PAR UNE PORTE (demande utilisateur)
+   Sur le palier d'une porte du registre (world/doorways.js), une invite s'affiche : F pour entrer.
+   Fondu au noir, on se retrouve sur le balcon du dernier étage, face à la rue ; là-haut le
+   déplacement est borné au balcon (setConfine). Devant la porte-fenêtre, F fait redescendre sur le
+   palier du perron. Pas de pièce intérieure pour l'instant : la porte est un passage.
+   (Noms de premier niveau préfixés « door » : le collage mono-fichier met tous les modules ensemble.)
+   ===================================================================== */
+const doorPromptEl = document.getElementById('prompt'), doorFadeEl = document.getElementById('fade');
+let doorNear = null, doorBusy = false, doorShown = '';
+const doorDist2 = (p, q) => (p.x - q.x) ** 2 + (p.z - q.z) ** 2;
+
+/** À chaque image, après le déplacement du joueur : quelle porte est à portée ? */
+function updateDoorways() {
+  if (doorBusy) return;
+  doorNear = null;
+  const p = camera.position, fy = playerFootY();
+  for (const d of doorways) {
+    if (d.onBalcony) { if (doorDist2(p, d.balconyDoor) < d.rBack ** 2) doorNear = { d, dir: 'down' }; }
+    else if (fy !== null && Math.abs(fy - d.doorY) < 0.6 && doorDist2(p, d.door) < d.r ** 2) doorNear = { d, dir: 'up' };
+  }
+  const text = !doorNear || !playerActive() ? '' : doorNear.dir === 'up' ? '<kbd>F</kbd> entrer — monter au balcon' : '<kbd>F</kbd> redescendre dans la rue';
+  if (text !== doorShown) { doorPromptEl.innerHTML = text; doorPromptEl.classList.toggle('on', !!text); doorShown = text; }
+}
+
+/** Fondu au noir, saut, fondu retour (le temps que les lumières suivent : ~1 s après un saut). */
+function doorTransition() {
+  const { d, dir } = doorNear;
+  doorBusy = true; doorPromptEl.classList.remove('on'); doorShown = '';
+  doorFadeEl.classList.add('on');
+  setTimeout(() => {
+    if (dir === 'up') { setConfine(d.balcony.confine); teleportPlayer(d.balcony.x, d.balcony.z, d.balcony.yaw, -0.12); d.onBalcony = true; }
+    else { setConfine(null); teleportPlayer(d.out.x, d.out.z, d.out.yaw, -0.05); d.onBalcony = false; }
+    setTimeout(() => { doorFadeEl.classList.remove('on'); doorBusy = false; }, 650);
+  }, 380);
+}
+window.addEventListener('keydown', e => {
+  if (e.code !== 'KeyF' || e.repeat || doorBusy || !doorNear || !playerActive()) return;
+  doorTransition();
+});
+/** Tests : comme la touche F (renvoie 'up', 'down' ou null). */
+function useDoorForTest() { if (!doorNear || doorBusy) return null; const dir = doorNear.dir; doorTransition(); return dir; }
 
 /* ───────────────────────── src/audio/wind.js ───────────────────────── */
 /* =====================================================================
@@ -8781,7 +8919,7 @@ scene.traverse(o => { if (o !== camera && o !== scene) o.matrixAutoUpdate = fals
 
 // Crochet de débogage / tests visuels : position de la caméra et test de collision
 // lisibles depuis la console (le reste vit en portée module).
-window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones, windState, walkZones, activate: debugActivate, powder: powderState };
+window.__blizzard = { camera, scene, renderer, composer, collides, step: updatePlayer, keys, adaptiveRes, wind: windDebug, snowBounce, photo: photoDebug, startup, lightLoop, lightPool, streetZones, windState, walkZones, activate: debugActivate, powder: powderState, doorways, useDoor: useDoorForTest };
 
 // Touche P : « qu'est-ce que je regarde ? » — position, orientation et objet visé au
 // centre de l'écran, affichés dans le HUD et en console. Pour signaler un artefact.
@@ -8824,6 +8962,7 @@ function frame(rawDt, t) {
   const dt = Math.min(rawDt, 0.05);
   updateFootprints(t);                                          // horloge des traces de pas (posées pendant updatePlayer)
   const speed = updatePlayer(dt);
+  updateDoorways();                                             // porte à portée ? (touche F : balcon)
   updateStreetVisibility(camera);                               // rue de gauche : on ne dessine que ce que l'ouverture du carrefour laisse voir
   if (updatePhotoGame(dt, t, speed)) updateScale();             // viseur / zoom : le champ de vision a changé
 
